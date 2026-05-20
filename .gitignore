@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+secrets.properties
+app/google-services.json
+.idea/
