@@ -36,7 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel               // CHANGED: was viewModel
 import com.example.kumbuka.ui.components.KumbukaLogo
 import com.example.kumbuka.ui.theme.KumbukaColors
 import com.example.kumbuka.ui.theme.ManropeFamily
@@ -48,36 +48,58 @@ import com.example.kumbuka.viewmodel.AuthViewModel
 //
 // Primary landing screen for unauthenticated users.
 // Scenarios handled:
-//   • New user         → fills form → "Get Started" → Firebase creates account
+//   • New user         → fills form → "Get Started" → Spring Boot creates account
 //   • Returning user   → taps "Log in" link → LoginScreen
 //   • Already logged in → never reaches this screen (NavGraph routes to Home)
-//   • Error cases      → animated error banner with Firebase error message
+//   • Error cases      → animated error banner with Spring Boot error message
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun SignUpScreen(
-    onSignUpSuccess:   () -> Unit,   // → HomeScreen
-    onNavigateToLogin: () -> Unit    // → LoginScreen (back arrow OR "Log in" link)
+    onSignUpSuccess:   () -> Unit,
+    onNavigateToLogin: () -> Unit,
+    // CHANGED: ViewModel is now a parameter with a default value.
+    //
+    // WHY: makes this screen testable. In production NavGraph calls
+    // SignUpScreen() without passing viewModel — hiltViewModel() is used.
+    // In tests, a fake ViewModel is passed in directly:
+    //   SignUpScreen(onSignUpSuccess = {}, onNavigateToLogin = {}, viewModel = fakeVm)
+    //
+    // The default must be hiltViewModel() not viewModel() because AuthViewModel
+    // now has an @Inject constructor that requires AuthRepository. viewModel()
+    // cannot satisfy that — only hiltViewModel() can.
+    viewModel: AuthViewModel = hiltViewModel()                      // CHANGED
 ) {
     val focusManager = LocalFocusManager.current
 
-    // ── ViewModel wired to Firebase ───────────────────────────────────────────
-    val viewModel: AuthViewModel = viewModel()
+    // REMOVED: val viewModel: AuthViewModel = viewModel()
+    // The ViewModel is now received as a parameter above.
     val authState by viewModel.authState.collectAsState()
 
-    // ── Form fields ───────────────────────────────────────────────────────────
-    var fullName        by remember { mutableStateOf("") }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // FORM FIELDS
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    var name        by remember { mutableStateOf("") }
     var email           by remember { mutableStateOf("") }
     var phone           by remember { mutableStateOf("") }
     var password        by remember { mutableStateOf("") }
+    var confirmPassword        by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
     var termsAccepted   by remember { mutableStateOf(false) }
 
-    // ── Derived UI state ──────────────────────────────────────────────────────
-    val isLoading = authState is AuthState.Loading
+    // ─────────────────────────────────────────────────────────────────────────────
+    // UI state
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    val isLoading    = authState is AuthState.Loading
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // ── React to Firebase auth state changes ──────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+    // REACT TO AUTH STATE CHANGES
+    // ─────────────────────────────────────────────────────────────────────────────
+
     LaunchedEffect(authState) {
         when (val s = authState) {
             is AuthState.Success -> {
@@ -92,28 +114,47 @@ fun SignUpScreen(
     // ── Reset ViewModel state when screen first appears ───────────────────────
     LaunchedEffect(Unit) { viewModel.resetState() }
 
-    // ── Validation ────────────────────────────────────────────────────────────
-    fun isEmailValid(e: String)   = android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()
-    fun isPhoneValid(p: String)   = p.length >= 7 && p.all { it.isDigit() || it in "+- " }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // VALIDATION
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    fun isEmailValid(e: String)     = android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()
+    fun isPhoneValid(p: String)     = p.length >= 7 && p.all { it.isDigit() || it in "+- " }
     fun isPasswordStrong(p: String) = p.length >= 8
 
     fun validate(): Boolean {
         return when {
-            fullName.isBlank()          -> { errorMessage = "Please enter your full name."; false }
+            name.isBlank()          -> { errorMessage = "Please enter your full name."; false }
             !isEmailValid(email)        -> { errorMessage = "Please enter a valid email address."; false }
             !isPhoneValid(phone)        -> { errorMessage = "Please enter a valid phone number."; false }
             !isPasswordStrong(password) -> { errorMessage = "Password must be at least 8 characters."; false }
-            !termsAccepted              -> { errorMessage = "You must accept the Terms and Conditions."; false }
+             // blank check comes before mismatch check
+            confirmPassword.isBlank()         -> { errorMessage = "Please confirm your password."; false }
+            confirmPassword != password       -> { errorMessage = "Passwords do not match."; false }
+            // !termsAccepted              -> { errorMessage = "You must accept the Terms and Conditions."; false }
             else                        -> { errorMessage = null; true }
         }
     }
 
-    // ── Submit ────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────────
+    // SUBMIT
+    // ─────────────────────────────────────────────────────────────────────────────
+
     fun onGetStartedClicked() {
         focusManager.clearFocus()
         if (!validate()) return
         errorMessage = null
-        viewModel.signUp(email, password)
+        // CHANGED: was viewModel.signUp(email, password)
+        // Now passes all four fields that Spring Boot's /register endpoint expects.
+        // name and phone were already collected by the form but were previously
+        // dropped before reaching the API call. They are now included.
+        viewModel.signUp(
+            name = name,
+            email    = email,
+            phone    = phone,
+            password = password,
+            confirmPassword = confirmPassword
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -129,7 +170,6 @@ fun SignUpScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
-            // ── Header: back arrow ────────────────────────────────────────────
             SignUpTopBar(onBack = onNavigateToLogin)
 
             Column(
@@ -138,9 +178,6 @@ fun SignUpScreen(
                     .padding(horizontal = 24.dp)
                     .padding(top = 8.dp, bottom = 48.dp)
             ) {
-
-
-                // ── Headings ──────────────────────────────────────────────────
                 Text(
                     text       = "Create Account",
                     fontFamily = ManropeFamily,
@@ -163,18 +200,25 @@ fun SignUpScreen(
 
                 Spacer(Modifier.height(40.dp))
 
-                // ── Fields ────────────────────────────────────────────────────
+                // ─────────────────────────────────────────────────────────────────────────────
+                // NAME
+                // ─────────────────────────────────────────────────────────────────────────────
+
                 SignUpTextField(
-                    value         = fullName,
-                    onValueChange = { fullName = it; errorMessage = null },
-                    label         = "Full Name",
+                    value         = name,
+                    onValueChange = { name = it; errorMessage = null },
+                    label         = "Name",
                     placeholder   = "John Doe",
                     keyboardType  = KeyboardType.Text,
                     imeAction     = ImeAction.Next,
                     onImeAction   = { focusManager.moveFocus(FocusDirection.Down) },
-                    isError       = errorMessage != null && fullName.isBlank()
+                    isError       = errorMessage != null && name.isBlank()
                 )
                 Spacer(Modifier.height(20.dp))
+
+                // ─────────────────────────────────────────────────────────────────────────────
+                // EMAIL
+                // ─────────────────────────────────────────────────────────────────────────────
 
                 SignUpTextField(
                     value         = email,
@@ -188,11 +232,15 @@ fun SignUpScreen(
                 )
                 Spacer(Modifier.height(20.dp))
 
+                // ─────────────────────────────────────────────────────────────────────────────
+                // PHONE
+                // ─────────────────────────────────────────────────────────────────────────────
+
                 SignUpTextField(
                     value         = phone,
                     onValueChange = { phone = it; errorMessage = null },
                     label         = "Phone Number",
-                    placeholder   = "+254 700 000 000",
+                    placeholder   = "0700 000 000",
                     keyboardType  = KeyboardType.Phone,
                     imeAction     = ImeAction.Next,
                     onImeAction   = { focusManager.moveFocus(FocusDirection.Down) },
@@ -200,23 +248,55 @@ fun SignUpScreen(
                 )
                 Spacer(Modifier.height(20.dp))
 
+                // ─────────────────────────────────────────────────────────────────────────────
+                // PASSWORD
+                // onDone moves focus to Confirm Password, not submit
+                // ─────────────────────────────────────────────────────────────────────────────
+
                 SignUpPasswordField(
+                    label            = "Password",
                     password         = password,
                     onPasswordChange = { password = it; errorMessage = null },
                     visible          = passwordVisible,
                     onToggleVisible  = { passwordVisible = !passwordVisible },
-                    onDone           = { onGetStartedClicked() },
+                    imeAction = ImeAction.Next,
+                    onDone           = { focusManager.moveFocus(FocusDirection.Down) },
                     isError          = errorMessage != null && !isPasswordStrong(password) && password.isNotBlank()
                 )
                 Spacer(Modifier.height(20.dp))
 
+                // ─────────────────────────────────────────────────────────────────────────────
+                // CONFIRM PASSWORD
+                // ─────────────────────────────────────────────────────────────────────────────
+
+                SignUpPasswordField(
+                    label            = "Confirm Password",
+                    password         = confirmPassword,
+                    onPasswordChange = { confirmPassword = it; errorMessage = null },
+                    visible          = confirmPasswordVisible,
+                    onToggleVisible  = { confirmPasswordVisible = !confirmPasswordVisible },
+                    imeAction = ImeAction.Done,
+                    onDone           = { onGetStartedClicked() },
+                    isError          = errorMessage != null && confirmPassword.isNotBlank() && confirmPassword !=password
+                )
+                Spacer(Modifier.height(20.dp))
+
+                // ─────────────────────────────────────────────────────────────────────────────
+                // TERMS & CONDITIONS
+                // ─────────────────────────────────────────────────────────────────────────────
+
+                /*
                 TermsCheckbox(
                     checked   = termsAccepted,
                     onChecked = { termsAccepted = it; errorMessage = null },
                     isError   = errorMessage?.contains("Terms") == true
                 )
+                */
 
-                // ── Error banner ──────────────────────────────────────────────
+                // ─────────────────────────────────────────────────────────────────────────────
+                // ERROR BANNER
+                // ─────────────────────────────────────────────────────────────────────────────
+
                 AnimatedVisibility(visible = errorMessage != null) {
                     errorMessage?.let { msg ->
                         Spacer(Modifier.height(16.dp))
@@ -229,7 +309,7 @@ fun SignUpScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Outlined.Warning, null,
-                                tint = KumbukaColors.Error,
+                                tint     = KumbukaColors.Error,
                                 modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(msg, fontFamily = ManropeFamily,
@@ -238,9 +318,13 @@ fun SignUpScreen(
                     }
                 }
 
+                // ─────────────────────────────────────────────────────────────────────────────
+                // GET STARTED BUTTON
+                // ─────────────────────────────────────────────────────────────────────────────
+
+
                 Spacer(Modifier.height(24.dp))
 
-                // ── Get Started button ────────────────────────────────────────
                 Button(
                     onClick  = { onGetStartedClicked() },
                     enabled  = !isLoading,
@@ -266,22 +350,26 @@ fun SignUpScreen(
 
                 Spacer(Modifier.height(32.dp))
 
-                // ── "Already have an account? Log in" ─────────────────────────
+                // ─────────────────────────────────────────────────────────────────────────────
+                // "Already have an account? Log in"
+                // ─────────────────────────────────────────────────────────────────────────────
+
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Already have an account? ",
-                        fontFamily = ManropeFamily, fontSize = 16.sp,
+                        fontFamily = ManropeFamily,
+                        fontSize = 16.sp,
                         color = KumbukaColors.OnSurfaceVariant)
                     Text("Log in",
-                        fontFamily = ManropeFamily, fontWeight = FontWeight.Bold,
+                        fontFamily = ManropeFamily,
+                        fontWeight = FontWeight.Bold,
                         fontSize = 16.sp, color = KumbukaColors.Primary,
                         modifier = Modifier.clickable { onNavigateToLogin() })
                 }
             }
 
-            // ── Decorative gradient strip ─────────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -308,7 +396,7 @@ private fun SignUpTopBar(onBack: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(100.dp)                         // matches LoginTopBar height
+            .height(100.dp)
             .background(KumbukaColors.SurfaceContainerLowest)
             .statusBarsPadding()
     ) {
@@ -320,7 +408,7 @@ private fun SignUpTopBar(onBack: () -> Unit) {
                 tint = KumbukaColors.OnSurface)
         }
         KumbukaLogo(
-            size     = 56.dp,                       // matches LoginTopBar logo size
+            size     = 56.dp,
             modifier = Modifier.align(Alignment.Center)
         )
     }
@@ -358,23 +446,40 @@ private fun SignUpTextField(
                 errorContainerColor     = KumbukaColors.ErrorContainer,
                 errorBorderColor        = KumbukaColors.Error
             ),
-            shape = RoundedCornerShape(12.dp),
+            shape    = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().height(56.dp)
         )
     }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// label - allows both "Password" and "Confirm Password" to reuse this composable without duplicating
+//code. Defaults to "Password" so any call site that doesn't pass it works correctly.
+
+// imeAction - "Password" field uses ImeAction.Next (moves focus to Confirm).
+// "Confirm Password" field uses ImeAction.Done (submits the form).
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 @Composable
 private fun SignUpPasswordField(
-    password: String, onPasswordChange: (String) -> Unit,
-    visible: Boolean, onToggleVisible: () -> Unit,
-    onDone: () -> Unit, isError: Boolean
+    label: String = "Password",
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    visible: Boolean,
+    onToggleVisible: () -> Unit,
+    imeAction: ImeAction = ImeAction.Done,
+    onDone: () -> Unit,
+    isError: Boolean
 ) {
     SignUpTextField(
-        value = password, onValueChange = onPasswordChange,
-        label = "Password", placeholder = "••••••••",
-        keyboardType = KeyboardType.Password, imeAction = ImeAction.Done,
-        onImeAction = onDone, isError = isError,
+        value                = password,
+        onValueChange        = onPasswordChange,
+        label                = label,
+        placeholder          = "••••••••",
+        keyboardType         = KeyboardType.Password,
+        imeAction            = imeAction,
+        onImeAction          = onDone,
+        isError              = isError,
         visualTransformation = if (visible) VisualTransformation.None
         else PasswordVisualTransformation(),
         trailingIcon = {
@@ -396,12 +501,16 @@ private fun TermsCheckbox(checked: Boolean, onChecked: (Boolean) -> Unit, isErro
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .then(if (isError) Modifier.border(1.dp, KumbukaColors.Error, RoundedCornerShape(8.dp)) else Modifier)
+            .then(
+                if (isError) Modifier.border(1.dp, KumbukaColors.Error, RoundedCornerShape(8.dp))
+                else Modifier
+            )
             .padding(4.dp)
     ) {
         Checkbox(
-            checked = checked, onCheckedChange = onChecked,
-            colors = CheckboxDefaults.colors(
+            checked         = checked,
+            onCheckedChange = onChecked,
+            colors          = CheckboxDefaults.colors(
                 checkedColor   = KumbukaColors.Secondary,
                 uncheckedColor = if (isError) KumbukaColors.Error else KumbukaColors.Outline,
                 checkmarkColor = KumbukaColors.OnSecondary
@@ -413,11 +522,14 @@ private fun TermsCheckbox(checked: Boolean, onChecked: (Boolean) -> Unit, isErro
                 withStyle(SpanStyle(fontFamily = ManropeFamily, fontSize = 14.sp,
                     color = KumbukaColors.OnSurfaceVariant)) { append("I agree to the ") }
                 withStyle(SpanStyle(fontFamily = ManropeFamily, fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold, color = KumbukaColors.Secondary)) { append("Terms and Conditions") }
+                    fontWeight = FontWeight.Bold,
+                    color = KumbukaColors.Secondary)) { append("Terms and Conditions") }
                 withStyle(SpanStyle(fontFamily = ManropeFamily, fontSize = 14.sp,
                     color = KumbukaColors.OnSurfaceVariant)) { append(" and Privacy Policy") }
             },
-            modifier = Modifier.padding(top = 10.dp).clickable { onChecked(!checked) }
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .clickable { onChecked(!checked) }
         )
     }
 }

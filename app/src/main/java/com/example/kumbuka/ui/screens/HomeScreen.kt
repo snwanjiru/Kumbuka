@@ -464,7 +464,7 @@ fun HomeScreen(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "© 2024 Kumbuka. Built for gentle accountability.",
+                    "© 2026 Kumbuka. Built for gentle accountability.",
                     fontFamily = ManropeFamily,
                     fontSize   = 12.sp,
                     color      = KumbukaColors.OnSurfaceVariant

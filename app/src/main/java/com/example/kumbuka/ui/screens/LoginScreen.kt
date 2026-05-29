@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.kumbuka.ui.components.KumbukaLogo
 import com.example.kumbuka.ui.theme.KumbukaColors
 import com.example.kumbuka.ui.theme.ManropeFamily
@@ -42,6 +42,10 @@ import com.example.kumbuka.viewmodel.AuthViewModel
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LoginScreen
+// Tabs:
+// Password -> viewModel.login(email, password)
+// Passwordless -> step 1: viewModel.sendOTP(email) -> button shows "Get OTP"
+//                 step 2: viewModel.verifyOtp (email, otpCode) -> button shows "Log In"
 // ─────────────────────────────────────────────────────────────────────────────
 
 private enum class LoginTab { Password, OTP }
@@ -51,11 +55,14 @@ fun LoginScreen(
     onLoginSuccess:   () -> Unit,
     onForgotPassword: () -> Unit,
     onSignUp:         () -> Unit,
-    onBack:           () -> Unit
+    onBack:           () -> Unit,
+
+    // Production: NavGraph calls LoginScreen() - hiltViewModel() default.
+    // Tests: pass a fake ViewModel directly.
+    viewModel: AuthViewModel = hiltViewModel()
 ) {
     val focusManager = LocalFocusManager.current
 
-    val viewModel: AuthViewModel = viewModel()
     val authState by viewModel.authState.collectAsState()
 
     var activeTab       by remember { mutableStateOf(LoginTab.Password) }
@@ -82,14 +89,28 @@ fun LoginScreen(
 
     fun validate(): Boolean {
         return when {
-            !isEmailValid(email) -> { errorMessage = "Please enter a valid email address."; false }
+            !isEmailValid(email) -> {
+                errorMessage = "Please enter a valid email address.";
+                false
+            }
             activeTab == LoginTab.Password && password.isBlank() -> {
-                errorMessage = "Password cannot be empty."; false }
+                errorMessage = "Password cannot be empty.";
+                false
+            }
             activeTab == LoginTab.OTP && otpCode.length < 4 -> {
-                errorMessage = "Please enter a valid one-time code."; false }
-            else -> { errorMessage = null; true }
+                errorMessage = "Please enter a valid one-time code.";
+                false
+            }
+            else -> {
+                errorMessage = null;
+                true
+            }
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // PASSWORD TAB LOGIN -only called on the Password tab
+    // ─────────────────────────────────────────────────────────────────────────────
 
     fun onLoginClicked() {
         focusManager.clearFocus()
@@ -97,6 +118,19 @@ fun LoginScreen(
         errorMessage = null
         viewModel.login(email, password)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // OTP Verification - separate function, calls verifyOtp not login
+    // Previously onLoginClicked() was called for both tabs which meant the OTP tab
+    // was calling viewModel.login(email, password) with an empty password.
+
+    fun onVerifyOtpClicked() {
+        focusManager.clearFocus()
+        if (!validate()) return
+        errorMessage = null
+        viewModel.verifyOtp(email, otpCode) // was login(email, password)
+    }
+
 
     Scaffold(
         containerColor = KumbukaColors.Surface,
@@ -135,7 +169,7 @@ fun LoginScreen(
                     LoginTabs(activeTab) { tab -> activeTab = tab; errorMessage = null; otpSent = false }
                     Spacer(Modifier.height(24.dp))
 
-                    // Email
+                    // Email field shared by both tabs
                     LoginTextField(
                         value = email, onValueChange = { email = it; errorMessage = null },
                         label = "Email Address", placeholder = "name@example.com",
@@ -145,12 +179,17 @@ fun LoginScreen(
                     )
                     Spacer(Modifier.height(16.dp))
 
+                    // Tab-specific content
+
                     AnimatedContent(
                         targetState = activeTab,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },
                         label = "secondField"
                     ) { tab ->
                         when (tab) {
+
+                            // Password tab
+
                             LoginTab.Password -> LoginPasswordField(
                                 password         = password,
                                 onPasswordChange = { password = it; errorMessage = null },
@@ -160,8 +199,10 @@ fun LoginScreen(
                                 onDone           = { onLoginClicked() },
                                 isError          = errorMessage != null && password.isBlank()
                             )
+
+                            // Passwordless (OTP) tab
                             LoginTab.OTP -> Column {
-                                // ── OTP field — only shown and enabled after code is sent ─────
+                                // ── OTP field — only shown and enabled after code is sent
                                 AnimatedVisibility(visible = otpSent) {
                                     Column {
                                         Spacer(Modifier.height(16.dp))

@@ -2,7 +2,7 @@ package com.example.kumbuka.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel          // ← CHANGED from viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -35,7 +35,7 @@ object Routes {
 // Scenario  3 — Returning user, online    → Splash → SignUp → Login → Home
 // Scenario  4 — Returning user, offline   → Splash → SignUp → Login (error banner)
 // Scenario  5 — Already logged in, online → Splash → Home (skips auth)
-// Scenario  6 — Already logged in, offline→ Splash → Home (Firebase cached session)
+// Scenario  6 — Already logged in, offline→ Splash → Home (JWT cached in DataStore)
 // Scenario  7 — Forgot password, online   → Login → ForgotPassword → dialog → Login
 // Scenario  8 — Forgot password, offline  → ForgotPassword (error banner in screen)
 // Scenario  9 — Log out                   → Home → SignUp (stack cleared)
@@ -43,7 +43,7 @@ object Routes {
 // Scenario 11 — Duplicate email on signup → SignUp (error banner, no nav change)
 // Scenario 12 — OTP login, online         → Login (two-step self-contained in screen)
 // Scenario 13 — OTP login, offline        → Login (error banner in screen)
-// Scenario 14 — Deep link password reset  → handled by Firebase in browser externally
+// Scenario 14 — Password reset link       → handled by Spring Boot email → browser
 //
 // BACK-STACK RULES
 //   Back on SignUp         → exits the app  (nothing below it)
@@ -73,23 +73,25 @@ fun KumbukaNavGraph(
         //   SplashScreen receives empty lambdas {} — it just shows the UI.
         //
         // WHY isAlreadyLoggedIn() works offline (Scenario 6):
-        //   Firebase caches the auth session locally on the device.
-        //   currentUser != null reads that local cache — no network needed.
+        //   TokenManager.isTokenValid() reads from DataStore which is written
+        //   to disk on login. No network call is made — works fully offline
+        //   as long as the JWT has not expired.
         // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.SPLASH) {
-            val viewModel: AuthViewModel = viewModel()
+            // CHANGED: hiltViewModel() — Hilt creates and injects AuthRepository
+            // automatically. viewModel() would fail because AuthViewModel now
+            // requires constructor injection that only Hilt can provide.
+            val viewModel: AuthViewModel = hiltViewModel()
 
-            // Single source of truth for routing — only this LaunchedEffect
-            // decides where to go after the splash delay.
             LaunchedEffect(Unit) {
                 delay(2_200)
                 if (viewModel.isAlreadyLoggedIn()) {
-                    // Scenarios 5 & 6 — valid session (online or cached offline)
+                    // Scenarios 5 & 6 — valid JWT in DataStore, go straight home
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
                 } else {
-                    // Scenarios 1, 2, 3, 4 — no session, land on SignUp
+                    // Scenarios 1, 2, 3, 4 — no valid token, land on SignUp
                     navController.navigate(Routes.SIGN_UP) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
@@ -107,22 +109,17 @@ fun KumbukaNavGraph(
         // ── 2. SIGN UP ─────────────────────────────────────────────────────────
         // Covers: Scenarios 1, 2, 9, 11
         //
-        // Primary unauthenticated landing screen.
-        // Offline errors (Sc.2) and duplicate email (Sc.11) show inside the
-        // screen's own error banner — no navigation change required for those.
+        // hiltViewModel() is called inside SignUpScreen itself — no ViewModel
+        // needed at the NavGraph level for this destination.
         // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.SIGN_UP) {
             SignUpScreen(
                 onSignUpSuccess = {
-                    // Scenario 1 — new account created, go home, clear auth stack
-                    // so Back on Home exits the app instead of returning here
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.SIGN_UP) { inclusive = true }
                     }
                 },
                 onNavigateToLogin = {
-                    // Scenarios 3, 4 — returning user taps "Log in"
-                    // SignUp stays in the back-stack so Back on Login returns here
                     navController.navigate(Routes.LOGIN)
                 }
             )
@@ -131,29 +128,22 @@ fun KumbukaNavGraph(
         // ── 3. LOGIN ───────────────────────────────────────────────────────────
         // Covers: Scenarios 3, 4, 7, 8, 12, 13
         //
-        // Offline errors (Sc.4), OTP flow (Sc.12, 13) are self-contained inside
-        // LoginScreen — no navigation change required for those cases.
+        // hiltViewModel() is called inside LoginScreen itself.
         // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.LOGIN) {
             LoginScreen(
                 onLoginSuccess = {
-                    // Scenarios 3, 12 — authenticated successfully
-                    // Clear entire auth stack (SignUp + Login) so Back exits app
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.SIGN_UP) { inclusive = true }
                     }
                 },
                 onForgotPassword = {
-                    // Scenario 7 — user needs a reset link
                     navController.navigate(Routes.FORGOT_PASSWORD)
                 },
                 onSignUp = {
-                    // User wants to create an account instead
-                    // Pop back to SignUp which is already below Login in the stack
                     navController.popBackStack()
                 },
                 onBack = {
-                    // Back arrow — returns to SignUp
                     navController.popBackStack()
                 }
             )
@@ -162,15 +152,11 @@ fun KumbukaNavGraph(
         // ── 4. FORGOT PASSWORD ─────────────────────────────────────────────────
         // Covers: Scenarios 7, 8
         //
-        // Offline errors (Sc.8) show inside the screen's own error banner.
-        // On success the screen shows a non-dismissible dialog, then calls
-        // onNavigateBackToLogin which fires the lambda below.
+        // hiltViewModel() is called inside ForgotPasswordScreen itself.
         // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.FORGOT_PASSWORD) {
             ForgotPasswordScreen(
                 onNavigateBackToLogin = {
-                    // Scenario 7 — dialog OK tapped, or back arrow pressed
-                    // Remove ForgotPassword from stack; Login sits below it
                     navController.navigate(Routes.LOGIN) {
                         popUpTo(Routes.FORGOT_PASSWORD) { inclusive = true }
                     }
@@ -181,18 +167,21 @@ fun KumbukaNavGraph(
         // ── 5. HOME ────────────────────────────────────────────────────────────
         // Covers: Scenarios 5, 6, 9, 10
         //
+        // CHANGED: hiltViewModel() — needed here at the NavGraph level because
+        // HomeScreen needs viewModel.signOut() wired to the logout button, and
+        // Hilt must provide the injected AuthRepository to construct it.
+        //
         // Scenario 10 (session expired / 401) will be handled here in Stage 5
-        // when Retrofit is wired up. The AuthInterceptor will detect a 401,
-        // call viewModel.signOut(), and trigger the same flow as Scenario 9.
+        // when the AuthInterceptor detects a 401 and triggers signOut().
         // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.HOME) {
-            val viewModel: AuthViewModel = viewModel()
+            // CHANGED: hiltViewModel() replaces viewModel()
+            val viewModel: AuthViewModel = hiltViewModel()
 
             HomeScreen(
                 onLogOut = {
-                    // Scenarios 9 & 10 — clear Firebase session first
+                    // Clears JWT from DataStore, then NavGraph navigates away
                     viewModel.signOut()
-                    // Land on SignUp and wipe the entire stack so Back exits app
                     navController.navigate(Routes.SIGN_UP) {
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
