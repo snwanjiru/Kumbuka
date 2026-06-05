@@ -1,11 +1,7 @@
 package com.example.kumbuka.ui.screens
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -15,9 +11,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Alarm
-import androidx.compose.material.icons.outlined.Balance
-import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.automirrored.outlined.Notes
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -26,21 +22,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.kumbuka.ui.components.KumbukaLogo
 import com.example.kumbuka.ui.theme.KumbukaColors
 import com.example.kumbuka.ui.theme.ManropeFamily
-import kotlin.math.cos
-import kotlin.math.roundToInt
-import kotlin.math.sin
+import com.example.kumbuka.viewmodel.HomeTab
+import com.example.kumbuka.viewmodel.HomeViewModel
+import com.example.kumbuka.viewmodel.TabState
+import kotlinx.coroutines.launch
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout constants — same straddling pattern used across all screens
@@ -49,456 +44,484 @@ private val TOP_BAR_HEIGHT = 64.dp
 private val LOGO_CIRCLE    = 80.dp
 private val LOGO_HALF      = LOGO_CIRCLE / 2   // 40.dp
 
-// Orbit constants — tweak these to resize the circular feature layout
-private val ORBIT_CONTAINER = 300.dp   // total canvas the orbit sits inside
-private val ORBIT_RADIUS_DP = 108f     // distance from centre to each item centre
-private val ITEM_SIZE       = 76.dp    // diameter of each feature circle
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Feature data model
-// ─────────────────────────────────────────────────────────────────────────────
-private data class Feature(
-    val icon:        ImageVector,
-    val title:       String,
-    val description: String
-)
-
-private val features = listOf(
-    Feature(Icons.Outlined.Alarm,   "Forgetfulness",   "Automated tracking and smart reminders ensure no loan slips through."),
-    Feature(Icons.Outlined.Groups,  "Social Friction",  "Gentler, third-party nudges mean you never have to be the bad guy."),
-    Feature(Icons.Outlined.Balance, "Lack of Order",    "A centralized ledger both parties can verify anytime."),
-    Feature(Icons.Outlined.Shield,  "Overextending",    "Smart tools to set lending boundaries and track your exposure.")
-)
-
 // ─────────────────────────────────────────────────────────────────────────────
 // HomeScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun HomeScreen(
-    onLogOut:       () -> Unit,
-    onGetStarted:   () -> Unit = {}    // placeholder — wire to CircleListScreen later
+    onLogOut:              () -> Unit,
+    onNavigateToCircles:   () -> Unit = {},
+    onNavigateToActivity:  () -> Unit = {},
+    onNavigateToSettings:  () -> Unit = {},
+    onNavigateToRecordLent: () -> Unit = {},
+    onNavigateToRecordBorrowed: () -> Unit = {},
+    onGetStarted:          () -> Unit = {},
+    viewModel: HomeViewModel = hiltViewModel()
 ) {
-    // ── Orbit rotation state ──────────────────────────────────────────────────
-    // Currently static (0f). To animate in future, replace with:
-    //   val infiniteTransition = rememberInfiniteTransition(label = "orbit")
-    //   val orbitRotation by infiniteTransition.animateFloat(
-    //       initialValue = 0f, targetValue = 360f,
-    //       animationSpec = infiniteRepeatable(tween(12_000, easing = LinearEasing)),
-    //       label = "orbitAngle"
-    //   )
-    val orbitRotation = 0f   // change to animated value when ready
+    // ── Drawer state ──────────────────────────────────────────────────────────
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
 
-    // ── Selected feature detail ───────────────────────────────────────────────
-    var selectedFeature by remember { mutableStateOf<Feature?>(null) }
+    // ── Collect ViewModel state ───────────────────────────────────────────────
+    val selectedTab by viewModel.selectedTab.collectAsState()
+    val tabState by viewModel.tabState.collectAsState()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(KumbukaColors.Background)
+    // ── Reset ViewModel on first appearance ───────────────────────────────────
+    LaunchedEffect(Unit) {
+        viewModel.resetState()
+    }
+
+    // ── Main layout wrapped in navigation drawer ──────────────────────────────
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            HomeDrawerContent(
+                onLogOut           = onLogOut,
+                onNavigateToCircles = onNavigateToCircles,
+                onNavigateToActivity = onNavigateToActivity,
+                onNavigateToSettings = onNavigateToSettings,
+                onDrawerClose      = { coroutineScope.launch { drawerState.close() } }
+            )
+        }
     ) {
-        // ── Layer 1: scrollable page content ─────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .background(KumbukaColors.Background)
         ) {
-
-            // ── Top bar — same bg as screen for seamless logo straddle ────────
+            // ── FIXED HEADER: Top Bar + Hero Section + Straddling Logo ───────
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(TOP_BAR_HEIGHT)
-                    .background(KumbukaColors.Background)
-                    .statusBarsPadding()
-            ) {
-                // Log out — pinned to the right
-                TextButton(
-                    onClick  = onLogOut,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 8.dp)
-                ) {
-                    Text(
-                        "Log out",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize   = 13.sp,
-                        color      = KumbukaColors.Secondary
-                    )
-                }
-                // Logo slot is empty here — it floats in Layer 2
-            }
-
-            // ── Dark hero section ─────────────────────────────────────────────
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Extra top padding so the hero doesn't hide behind the logo
-                    .padding(top = LOGO_HALF + 8.dp)
-                    .background(KumbukaColors.Primary)
-                    .padding(horizontal = 24.dp, vertical = 36.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column {
-                    Text(
-                        text       = "Lend with clarity.",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize   = 30.sp,
-                        color      = KumbukaColors.OnPrimaryContainer,
-                        lineHeight = 38.sp
-                    )
-                    Text(
-                        text       = "Preserve the bond.",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize   = 30.sp,
-                        color      = Color.White,
-                        lineHeight = 38.sp
-                    )
+                    // ── Top bar — hamburger (left) + empty centre + empty right ───
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(TOP_BAR_HEIGHT)
+                            .background(KumbukaColors.Background)
+                            .statusBarsPadding()
+                    ) {
+                        // Hamburger icon — left side
+                        IconButton(
+                            onClick = { coroutineScope.launch { drawerState.open() } },
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        ) {
+                            Icon(
+                                Icons.Default.Menu,
+                                contentDescription = "Open menu",
+                                tint               = KumbukaColors.Primary,
+                                modifier           = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    // ── Dark hero section with 2-tab header ──────────────────────
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(KumbukaColors.Primary)
+                            .padding(horizontal = 24.dp)
+                            .padding(top = LOGO_HALF + 40.dp, bottom = 12.dp)
+                    ) {
+                        Column {
+                            // ── Tab row (2 columns) ───────────────────────────
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                // Left: Dashboard (Active)
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) { viewModel.selectTab(HomeTab.Dashboard) },
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "Dashboard",
+                                        fontFamily = ManropeFamily,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 18.sp,
+                                        color = Color.White.copy(
+                                            alpha = if (selectedTab == HomeTab.Dashboard) 1f else 0.7f
+                                        ),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+
+                                // Right: Cash Flow
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) { viewModel.selectTab(HomeTab.CashFlow) },
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "Cash Flow",
+                                        fontFamily = ManropeFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = KumbukaColors.OnPrimaryContainer.copy(
+                                            alpha = if (selectedTab == HomeTab.CashFlow) 1f else 0.7f
+                                        ),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            // ── Selection Indicator (Dynamic Underline) ──────
+                            // Underline moves to the selected tab
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                when (selectedTab) {
+                                    HomeTab.Dashboard -> {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(3.dp)
+                                                .padding(horizontal = 40.dp)
+                                                .background(Color.White, RoundedCornerShape(2.dp))
+                                        )
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                    HomeTab.CashFlow -> {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(3.dp)
+                                                .padding(horizontal = 40.dp)
+                                                .background(Color.White, RoundedCornerShape(2.dp))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            }
 
-            // ── Features section — light background ───────────────────────────
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(KumbukaColors.SurfaceContainerLow)
-                    .padding(horizontal = 24.dp, vertical = 36.dp)
-            ) {
-                Text(
-                    text       = "Solving the Friction of Lending",
-                    fontFamily = ManropeFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 22.sp,
-                    color      = KumbukaColors.Primary,
-                    textAlign  = TextAlign.Center
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                Text(
-                    text       = "Informal lending shouldn't cost you a friendship. We handle the awkward parts so you can focus on the relationship.",
-                    fontFamily = ManropeFamily,
-                    fontSize   = 14.sp,
-                    color      = KumbukaColors.OnSurfaceVariant,
-                    textAlign  = TextAlign.Center,
-                    lineHeight = 22.sp
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                // "Get Started" button
-                Button(
-                    onClick = onGetStarted,
-                    colors  = ButtonDefaults.buttonColors(
-                        containerColor = KumbukaColors.Primary,
-                        contentColor   = KumbukaColors.OnPrimary
-                    ),
-                    shape    = RoundedCornerShape(50),
-                    modifier = Modifier.height(48.dp)
-                ) {
-                    Text(
-                        "Get Started",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize   = 14.sp
-                    )
-                }
-
-                Spacer(Modifier.height(40.dp))
-
-                // ── CIRCULAR ORBIT of 4 features ─────────────────────────────
-                // Each feature is placed at 90° intervals around a centre hub.
-                // orbitRotation shifts all items simultaneously — wire it to
-                // an InfiniteTransition to make them orbit continuously.
-                //
-                // Tap any item to reveal its description below the orbit.
-                //
-                // Position maths:
-                //   angleRad  = toRadians(orbitRotation + index*90 - 90)
-                //   px offset = cos(angleRad) * ORBIT_RADIUS_DP   (in dp)
-                //   py offset = sin(angleRad) * ORBIT_RADIUS_DP
-                //   final x   = containerCentre + px - itemSize/2
-                //   final y   = containerCentre + py - itemSize/2
-                // ─────────────────────────────────────────────────────────────
-                val containerPx   = with(androidx.compose.ui.platform.LocalDensity.current) { ORBIT_CONTAINER.toPx() }
-                val itemSizePx    = with(androidx.compose.ui.platform.LocalDensity.current) { ITEM_SIZE.toPx() }
-                val orbitRadiusPx = with(androidx.compose.ui.platform.LocalDensity.current) { ORBIT_RADIUS_DP.dp.toPx() }
-                val centrePx      = containerPx / 2f
-
+                // ── Straddling logo circle ───────────────────────────────
+                // Centre sits exactly on the top-bar bottom edge
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(ORBIT_CONTAINER)
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = TOP_BAR_HEIGHT - LOGO_HALF)
+                        .size(LOGO_CIRCLE)
+                        .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
+                        .background(Color.White, CircleShape)
                 ) {
+                    KumbukaLogo(size = LOGO_CIRCLE * 0.68f)
+                }
+            }
 
-                    // ── Dashed orbit ring (visual guide) ──────────────────────
-                    Box(
-                        modifier = Modifier
-                            .size((ORBIT_RADIUS_DP * 2 + ITEM_SIZE.value).dp)
-                            .clip(CircleShape)
-                            .background(
-                                color = KumbukaColors.SurfaceContainerHigh.copy(alpha = 0.6f)
+            // ── SCROLLABLE BODY: content starts below the fixed hero ─────────
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // ── Tab content — varies based on selectedTab ──────────────────
+                when {
+                    tabState is TabState.Loading -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = KumbukaColors.Primary,
+                                modifier = Modifier.size(40.dp)
                             )
-                    )
-
-                    // ── Inner ring (subtle) ───────────────────────────────────
-                    Box(
-                        modifier = Modifier
-                            .size((ORBIT_RADIUS_DP * 0.8f).dp)
-                            .clip(CircleShape)
-                            .background(KumbukaColors.Background)
-                    )
-
-                    // ── Centre hub: Kumbuka logo ──────────────────────────────
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(60.dp)
-                            .shadow(elevation = 3.dp, shape = CircleShape, clip = false)
-                            .background(Color.White, CircleShape)
-                    ) {
-                        KumbukaLogo(size = 40.dp)
-                    }
-
-                    // ── The 4 orbiting feature items ──────────────────────────
-                    features.forEachIndexed { index, feature ->
-                        val angleRad = Math.toRadians(
-                            (orbitRotation + index * 90f - 90f).toDouble()
-                        )
-                        val px = (cos(angleRad) * orbitRadiusPx).toFloat()
-                        val py = (sin(angleRad) * orbitRadiusPx).toFloat()
-
-                        val offsetX = (centrePx + px - itemSizePx / 2f).roundToInt()
-                        val offsetY = (centrePx + py - itemSizePx / 2f).roundToInt()
-
-                        val isSelected = selectedFeature == feature
-
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(ITEM_SIZE)
-                                .offset { IntOffset(offsetX, offsetY) }
-                                .shadow(
-                                    elevation = if (isSelected) 8.dp else 3.dp,
-                                    shape     = CircleShape,
-                                    clip      = false
-                                )
-                                .background(
-                                    color = if (isSelected) KumbukaColors.PrimaryContainer
-                                    else Color.White,
-                                    shape = CircleShape
-                                )
-                                .clip(CircleShape)
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector        = feature.icon,
-                                    contentDescription = feature.title,
-                                    tint               = if (isSelected) Color.White
-                                    else KumbukaColors.Primary,
-                                    modifier           = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text       = feature.title,
-                                    fontFamily = ManropeFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize   = 9.sp,
-                                    color      = if (isSelected) Color.White
-                                    else KumbukaColors.Primary,
-                                    textAlign  = TextAlign.Center,
-                                    maxLines   = 2,
-                                    lineHeight = 12.sp
-                                )
-                            }
-                        }
-
-                        // Invisible full-size tap target sitting on the item
-                        // (prevents the offset Box clickable fighting with scroll)
-                        Box(
-                            modifier = Modifier
-                                .size(ITEM_SIZE)
-                                .offset { IntOffset(offsetX, offsetY) }
-                                .clip(CircleShape)
-                                .then(
-                                    Modifier.noRippleClickable {
-                                        selectedFeature =
-                                            if (selectedFeature == feature) null else feature
-                                    }
-                                )
-                        )
-                    }
-                }
-
-                // ── Feature detail card — appears below orbit on tap ──────────
-                selectedFeature?.let { f ->
-                    Spacer(Modifier.height(20.dp))
-                    Surface(
-                        shape          = RoundedCornerShape(16.dp),
-                        color          = KumbukaColors.SurfaceContainerLowest,
-                        shadowElevation = 2.dp,
-                        modifier       = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(
-                                        KumbukaColors.SurfaceContainerHigh,
-                                        CircleShape
-                                    )
-                            ) {
-                                Icon(
-                                    f.icon, f.title,
-                                    tint     = KumbukaColors.Primary,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    f.title,
-                                    fontFamily = ManropeFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize   = 14.sp,
-                                    color      = KumbukaColors.Primary
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    f.description,
-                                    fontFamily = ManropeFamily,
-                                    fontSize   = 13.sp,
-                                    color      = KumbukaColors.OnSurfaceVariant,
-                                    lineHeight = 20.sp
-                                )
-                            }
                         }
                     }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                // Tap hint
-                Text(
-                    "Tap any circle to learn more",
-                    fontFamily = ManropeFamily,
-                    fontSize   = 11.sp,
-                    color      = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.6f),
-                    textAlign  = TextAlign.Center
-                )
-            }
-
-            // ── Privacy & Security section ────────────────────────────────────
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(KumbukaColors.SurfaceContainerLowest)
-                    .padding(horizontal = 24.dp, vertical = 28.dp)
-            ) {
-                Text(
-                    "Private & Secure",
-                    fontFamily = ManropeFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 16.sp,
-                    color      = KumbukaColors.Primary
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                Text(
-                    "Your data is yours. We use bank-level encryption to ensure that your financial relationships stay private and secure. No one sees your ledger except for you and the person you're transacting with.",
-                    fontFamily = ManropeFamily,
-                    fontSize   = 14.sp,
-                    color      = KumbukaColors.OnSurfaceVariant,
-                    lineHeight = 22.sp
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    listOf(
-                        Icons.Outlined.Shield to "Encrypted",
-                    ).forEach { (icon, label) ->
+                    tabState is TabState.Error -> {
                         Box(
-                            contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .size(40.dp)
-                                .background(
-                                    KumbukaColors.SurfaceContainerHigh,
-                                    CircleShape
-                                )
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(icon, label,
-                                tint     = KumbukaColors.Primary,
-                                modifier = Modifier.size(20.dp))
+                            Text(
+                                (tabState as TabState.Error).message,
+                                fontFamily = ManropeFamily,
+                                color = KumbukaColors.Error,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    else -> {
+                        if (selectedTab == HomeTab.Dashboard) {
+                            EmptyDashboard()
+                        } else {
+                            CashFlowTabContent(
+                                onRecordLent = onNavigateToRecordLent,
+                                onRecordBorrowed = onNavigateToRecordBorrowed
+                            )
                         }
                     }
                 }
             }
+        }
+    }
+}
 
-            // ── Footer ────────────────────────────────────────────────────────
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(KumbukaColors.Background)
-                    .padding(horizontal = 24.dp, vertical = 24.dp)
-            ) {
-                Text(
-                    "Kumbuka",
-                    fontFamily = ManropeFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize   = 16.sp,
-                    color      = KumbukaColors.Primary
+// ─────────────────────────────────────────────────────────────────────────────
+// HomeDrawerContent — side menu that slides in from the left
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun HomeDrawerContent(
+    onLogOut: () -> Unit,
+    onNavigateToCircles: () -> Unit,
+    onNavigateToActivity: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    onDrawerClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(280.dp)
+            .background(KumbukaColors.SurfaceContainerLowest)
+    ) {
+        // ── Header with close button ──────────────────────────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(8.dp),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            IconButton(onClick = onDrawerClose) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Close menu",
+                    tint               = KumbukaColors.Primary,
+                    modifier           = Modifier.size(24.dp)
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "© 2026 Kumbuka. Built for gentle accountability.",
-                    fontFamily = ManropeFamily,
-                    fontSize   = 12.sp,
-                    color      = KumbukaColors.OnSurfaceVariant
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    listOf("Privacy Policy", "Terms of Service", "Contact Support").forEach { label ->
-                        Text(
-                            label,
-                            fontFamily = ManropeFamily,
-                            fontSize   = 12.sp,
-                            color      = KumbukaColors.OnSurfaceVariant
-                        )
-                    }
-                }
             }
-
-            Spacer(Modifier.height(24.dp))
         }
 
-        // ── Layer 2: straddling logo circle ───────────────────────────────────
-        // Centre sits exactly on the top-bar bottom edge —
-        // same technique as ForgotPasswordScreen.
+        HorizontalDivider(color = KumbukaColors.OutlineVariant)
+
+        // ── Menu items ────────────────────────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 16.dp, vertical = 20.dp)
+        ) {
+            listOf(
+                "My Circles" to onNavigateToCircles,
+                "Activity" to onNavigateToActivity,
+                "Settings" to onNavigateToSettings
+            ).forEach { (label, onClick) ->
+                Text(
+                    label,
+                    fontFamily = ManropeFamily,
+                    fontSize   = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color      = KumbukaColors.Primary,
+                    modifier   = Modifier
+                        .fillMaxWidth()
+                        .clickable(remember { MutableInteractionSource() }, null) {
+                            onDrawerClose()
+                            onClick()
+                        }
+                        .padding(vertical = 16.dp)
+                )
+            }
+        }
+
+        HorizontalDivider(color = KumbukaColors.OutlineVariant)
+
+        // ── Logout at bottom ──────────────────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp)
+        ) {
+            TextButton(
+                onClick = {
+                    onDrawerClose()
+                    onLogOut()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "Log Out",
+                    fontFamily = ManropeFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize   = 14.sp,
+                    color      = KumbukaColors.Secondary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CashFlowTabContent(
+    onRecordLent: () -> Unit,
+    onRecordBorrowed: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // ── Empty state feel (matching Dashboard) ─────────────────────────────
+        val infiniteTransition = rememberInfiniteTransition(label = "cashFlowEmpty")
+        val offsetY by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue  = 12f,
+            animationSpec = infiniteRepeatable(
+                animation  = tween(2500, easing = LinearOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "y"
+        )
+
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = TOP_BAR_HEIGHT - LOGO_HALF)
-                .size(LOGO_CIRCLE)
-                .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
-                .background(Color.White, CircleShape)
+                .padding(top = 60.dp)
+                .graphicsLayer { translationY = offsetY }
+                .size(140.dp)
+                .background(KumbukaColors.SurfaceContainerHigh.copy(alpha = 0.5f), CircleShape)
         ) {
-            KumbukaLogo(size = LOGO_CIRCLE * 0.68f)
+            Icon(
+                imageVector        = Icons.AutoMirrored.Outlined.Notes,
+                contentDescription = null,
+                modifier           = Modifier.size(64.dp),
+                tint               = KumbukaColors.Primary.copy(alpha = 0.3f)
+            )
         }
+
+        Spacer(Modifier.height(40.dp))
+
+        Text(
+            text       = "Your cash flow is quiet",
+            fontFamily = ManropeFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize   = 20.sp,
+            color      = KumbukaColors.Primary,
+            textAlign  = TextAlign.Center
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            text       = "Record your first transaction to see your lending and borrowing trends here.",
+            fontFamily = ManropeFamily,
+            fontSize   = 15.sp,
+            color      = KumbukaColors.OnSurfaceVariant,
+            textAlign  = TextAlign.Center,
+            modifier   = Modifier.padding(horizontal = 24.dp),
+            lineHeight = 24.sp
+        )
+
+        Spacer(Modifier.height(60.dp))
+
+        // ── Action Buttons ────────────────────────────────────────────────────
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Button(
+                onClick  = onRecordLent,
+                colors   = ButtonDefaults.buttonColors(containerColor = KumbukaColors.Primary),
+                modifier = Modifier.weight(1f).height(56.dp),
+                shape    = RoundedCornerShape(12.dp)
+            ) {
+                Text("+ Money Lent", fontFamily = ManropeFamily, 
+                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            Button(
+                onClick  = onRecordBorrowed,
+                colors   = ButtonDefaults.buttonColors(containerColor = KumbukaColors.Secondary),
+                modifier = Modifier.weight(1f).height(56.dp),
+                shape    = RoundedCornerShape(12.dp)
+            ) {
+                Text("+ Money Borrowed", fontFamily = ManropeFamily, 
+                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Empty States
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun EmptyDashboard() {
+    val infiniteTransition = rememberInfiniteTransition(label = "empty")
+    val offsetY by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue  = 12f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(2500, easing = LinearOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "y"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 100.dp, bottom = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .graphicsLayer { translationY = offsetY }
+                .size(140.dp)
+                .background(KumbukaColors.SurfaceContainerHigh.copy(alpha = 0.5f), CircleShape)
+        ) {
+            Icon(
+                imageVector        = Icons.AutoMirrored.Outlined.Notes,
+                contentDescription = null,
+                modifier           = Modifier.size(64.dp),
+                tint               = KumbukaColors.Primary.copy(alpha = 0.3f)
+            )
+        }
+
+        Spacer(Modifier.height(40.dp))
+
+        Text(
+            text       = "Your ledger is a clean slate",
+            fontFamily = ManropeFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize   = 20.sp,
+            color      = KumbukaColors.Primary,
+            textAlign  = TextAlign.Center
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            text       = "When you start lending or borrowing within your circles, your activity and balances will appear here.",
+            fontFamily = ManropeFamily,
+            fontSize   = 15.sp,
+            color      = KumbukaColors.OnSurfaceVariant,
+            textAlign  = TextAlign.Center,
+            modifier   = Modifier.padding(horizontal = 48.dp),
+            lineHeight = 24.sp
+        )
     }
 }
 

@@ -11,7 +11,7 @@ import retrofit2.http.POST
 data class RegisterRequest(
     val name: String,
     val email:    String,
-    val phone:    String,
+    val phoneNumber: String,
     val password: String,
     val confirmPassword: String
 )
@@ -43,9 +43,9 @@ data class ForgotPasswordRequest(
 // refreshToken is nullable — include it only if your Spring Boot config issues one.
 // ""
 data class AuthResponse(
-    val accessToken:  String,
+    val token: String,
     val refreshToken: String? = null,
-    val expiresIn:    Long    = 86400L   // default 24 hours if backend omits it
+    val tokenExpiration: Long = 86400L // default 24 hours if backend omits it
 )
 
 // Generic response for operations that return a message but no token.
@@ -72,12 +72,12 @@ interface AuthApiService {
     // POST /api/auth/register
     // Creates a new user account. Spring Boot returns the JWT immediately so
     // the user is logged in straight after sign-up — no separate login needed.
-    @POST("kumbukaa/api/auth/register")
+    @POST("api/auth/register")
     suspend fun register(@Body request: RegisterRequest): Response<AuthResponse>
 
     // POST /api/auth/login
     // Verifies email + password. Returns JWT on success.
-    @POST("kumbukaa/api/auth/login")
+    @POST("api/auth/login")
     suspend fun login(@Body request: LoginRequest): Response<AuthResponse>
 
     // POST /api/auth/otp/send

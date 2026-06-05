@@ -65,9 +65,9 @@ class AuthRepositoryImpl @Inject constructor(
             val body = response.body()!!
             // Store the JWT so the user is immediately considered logged in
             tokenManager.saveTokens(
-                accessToken  = body.accessToken,
+                accessToken  = body.token,
                 refreshToken = body.refreshToken,
-                expiresInMs  = body.expiresIn * 1_000L   // Spring Boot sends seconds
+                expiresInMs  = body.tokenExpiration * 1_000L   // Spring Boot sends seconds
             )
             Result.success(Unit)
         } else {
@@ -84,9 +84,9 @@ class AuthRepositoryImpl @Inject constructor(
         if (response.isSuccessful) {
             val body = response.body()!!
             tokenManager.saveTokens(
-                accessToken  = body.accessToken,
+                accessToken  = body.token,
                 refreshToken = body.refreshToken,
-                expiresInMs  = body.expiresIn * 1_000L
+                expiresInMs  = body.tokenExpiration * 1_000L
             )
             Result.success(Unit)
         } else {
@@ -119,9 +119,9 @@ class AuthRepositoryImpl @Inject constructor(
         if (response.isSuccessful) {
             val body = response.body()!!
             tokenManager.saveTokens(
-                accessToken  = body.accessToken,
+                accessToken  = body.token,
                 refreshToken = body.refreshToken,
-                expiresInMs  = body.expiresIn * 1_000L
+                expiresInMs  = body.tokenExpiration * 1_000L
             )
             Result.success(Unit)
         } else {

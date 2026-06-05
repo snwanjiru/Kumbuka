@@ -10,6 +10,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.kumbuka.ui.screens.ForgotPasswordScreen
 import com.example.kumbuka.ui.screens.HomeScreen
 import com.example.kumbuka.ui.screens.LoginScreen
+import com.example.kumbuka.ui.screens.RecordTransactionScreen
 import com.example.kumbuka.ui.screens.SignUpScreen
 import com.example.kumbuka.ui.screens.SplashScreen
 import com.example.kumbuka.viewmodel.AuthViewModel
@@ -20,11 +21,12 @@ import kotlinx.coroutines.delay
 // ─────────────────────────────────────────────────────────────────────────────
 
 object Routes {
-    const val SPLASH          = "splash"
-    const val SIGN_UP         = "sign_up"
-    const val LOGIN           = "login"
-    const val FORGOT_PASSWORD = "forgot_password"
-    const val HOME            = "home"
+    const val SPLASH             = "splash"
+    const val SIGN_UP            = "sign_up"
+    const val LOGIN              = "login"
+    const val FORGOT_PASSWORD    = "forgot_password"
+    const val HOME               = "home"
+    const val RECORD_TRANSACTION = "record_transaction/{type}"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,10 +184,26 @@ fun KumbukaNavGraph(
                 onLogOut = {
                     // Clears JWT from DataStore, then NavGraph navigates away
                     viewModel.signOut()
-                    navController.navigate(Routes.SIGN_UP) {
+                    navController.navigate(Routes.LOGIN) {
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
+                },
+                onNavigateToRecordLent = {
+                    navController.navigate("record_transaction/lent")
+                },
+                onNavigateToRecordBorrowed = {
+                    navController.navigate("record_transaction/borrowed")
                 }
+            )
+        }
+
+        // ── 6. RECORD TRANSACTION ─────────────────────────────────────────────
+        composable(route = Routes.RECORD_TRANSACTION) { backStackEntry ->
+            val type = backStackEntry.arguments?.getString("type") ?: "lent"
+            RecordTransactionScreen(
+                transactionType = type,
+                onNavigateBack = { navController.popBackStack() },
+                onSaveSuccess = { navController.popBackStack() }
             )
         }
     }

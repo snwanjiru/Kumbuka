@@ -46,7 +46,7 @@ private val Context.authDataStore: DataStore<Preferences>
 
 @Singleton
 class TokenManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
 
     // ─────────────────────────────────────────────────────────────────────────

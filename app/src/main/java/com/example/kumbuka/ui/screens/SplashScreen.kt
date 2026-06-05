@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -15,7 +16,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
-import com.example.kumbuka.ui.components.KumbukaLogoWithGlow
+import com.example.kumbuka.ui.components.KumbukaLogo
 import com.example.kumbuka.ui.theme.KumbukaColors
 import com.example.kumbuka.ui.theme.ManropeFamily
 import kotlinx.coroutines.delay
@@ -59,8 +60,16 @@ fun SplashScreen(
         ) {
             Spacer(Modifier.weight(1f))
 
-            // ── Logo with soft glow halo ──────────────────────────────────────
-            KumbukaLogoWithGlow(size = 192.dp)
+            // ── Circular Logo Circle ─────────────────────────────────────────
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(160.dp)
+                    .shadow(elevation = 12.dp, shape = CircleShape, clip = false)
+                    .background(Color.White, CircleShape)
+            ) {
+                KumbukaLogo(size = 100.dp)
+            }
 
             Spacer(Modifier.height(24.dp))
 

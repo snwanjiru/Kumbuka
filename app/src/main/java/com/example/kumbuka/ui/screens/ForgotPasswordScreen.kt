@@ -37,10 +37,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun ForgotPasswordScreen(
-    onNavigateBackToLogin: () -> Unit
+    onNavigateBackToLogin: () -> Unit,
+    viewModel: AuthViewModel = hiltViewModel()
 ) {
     val focusManager = LocalFocusManager.current
-    val viewModel: AuthViewModel = hiltViewModel()
     val authState by viewModel.authState.collectAsState()
 
     var email by remember { mutableStateOf("") }
