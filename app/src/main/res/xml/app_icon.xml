@@ -1,30 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Simulated Shadow for the "puck" -->
-    <item
-        android:width="76dp"
-        android:height="76dp"
-        android:gravity="center">
+    <item android:width="76dp" android:height="76dp" android:gravity="center">
         <shape android:shape="oval">
             <solid android:color="#12000000" />
         </shape>
     </item>
 
     <!-- White "puck" matching the 72dp system splash window -->
-    <item
-        android:width="72dp"
-        android:height="72dp"
-        android:gravity="center">
+    <item android:width="72dp" android:height="72dp" android:gravity="center">
         <shape android:shape="oval">
             <solid android:color="#FFFFFF" />
         </shape>
     </item>
 
     <!-- The Logo: 105dp keeps edges outside the mask to avoid square clipping -->
-    <item
-        android:drawable="@drawable/ic_kumbuka_logo"
-        android:width="105dp"
-        android:height="105dp"
-        android:gravity="center"
-        android:top="12dp" />
+    <item android:drawable="@drawable/ic_kumbuka_logo" android:width="105dp" android:height="105dp"
+        android:gravity="center" android:top="12dp" />
 </layer-list>

@@ -23,11 +23,11 @@ val secrets = if (secretsFile.exists()) {
 }
 
 android {
-    namespace = "com.example.kumbuka"
+    namespace = "app.kumbuka"
     compileSdk = 35   // ← plain integer, not the release() DSL block
 
     defaultConfig {
-        applicationId = "com.example.kumbuka"
+        applicationId = "app.kumbuka"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -85,9 +85,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // ── Compose BOM ───────────────────────────────────────────────────────────
-    val composeBom = platform("androidx.compose:compose-bom:2024.05.00")
-    implementation(composeBom)
-    androidTestImplementation(composeBom)
+    implementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(platform(libs.androidx.compose.bom))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -105,8 +104,16 @@ dependencies {
     // ── Navigation ────────────────────────────────────────────────────────────
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
+    // ── Room ──────────────────────────────────────────────────────────────────
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
     // ── Core KTX ─────────────────────────────────────────────────────────────
     implementation("androidx.core:core-ktx:1.13.1")
+
+    // ── Lottie ───────────────────────────────────────────────────────────────
+    implementation(libs.lottie.compose)
 
     // ── Unit tests ────────────────────────────────────────────────────────────
     testImplementation("junit:junit:4.13.2")
