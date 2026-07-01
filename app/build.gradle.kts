@@ -111,6 +111,7 @@ dependencies {
 
     // ── Core KTX ─────────────────────────────────────────────────────────────
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation(libs.androidx.core.splashscreen)
 
     // ── Lottie ───────────────────────────────────────────────────────────────
     implementation(libs.lottie.compose)

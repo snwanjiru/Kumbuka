@@ -29,7 +29,6 @@ interface AuthRepository {
     suspend fun isLoggedIn(): Boolean
 
     // ── Registration ──────────────────────────────────────────────────────────
-    // CHANGED: added name and phone vs the previous version.
     // Spring Boot creates the user account and profile in one request.
     // Returns Result<Unit> — success means the JWT was stored, failure means
     // the error message is ready to show in the error banner.

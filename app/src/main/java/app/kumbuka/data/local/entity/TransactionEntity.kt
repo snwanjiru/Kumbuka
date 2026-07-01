@@ -18,5 +18,8 @@ data class TransactionEntity(
     val dateInMillis: Long,
     val dueDateInMillis: Long?,
     val notes: String,
-    val transactionType: String // "lent" or "borrowed"
+    val transactionType: String, // "lent" or "borrowed"
+    val amountPaid: Double = 0.0,
+    val balance: Double = 0.0,
+    val status: String = "PENDING"
 )

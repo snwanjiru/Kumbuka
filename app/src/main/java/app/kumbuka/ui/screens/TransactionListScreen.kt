@@ -1,5 +1,6 @@
 package app.kumbuka.ui.screens
 
+import android.widget.Toast
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -9,15 +10,22 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -30,10 +38,11 @@ import java.util.*
 
 @Composable
 fun TransactionListScreen(
-    onNavigateToRecord: (String) -> Unit,
+    onNavigateToRecord: (String, Long?) -> Unit,
     viewModel: TransactionViewModel = hiltViewModel()
 ) {
     val transactions by viewModel.allTransactions.collectAsState()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -64,7 +73,17 @@ fun TransactionListScreen(
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
                 items(transactions) { transaction ->
-                    TransactionCard(transaction = transaction)
+                    TransactionCard(
+                        transaction = transaction,
+                        onEdit = { onNavigateToRecord(transaction.transactionType, transaction.id) },
+                        onDelete = { 
+                            viewModel.deleteTransaction(transaction)
+                            Toast.makeText(context, "Record deleted", Toast.LENGTH_SHORT).show()
+                        },
+                        onRecordPayment = { amt, onResult ->
+                            viewModel.recordPayment(transaction, amt, onResult)
+                        }
+                    )
                 }
             }
         }
@@ -72,7 +91,12 @@ fun TransactionListScreen(
 }
 
 @Composable
-fun TransactionCard(transaction: TransactionEntity) {
+fun TransactionCard(
+    transaction: TransactionEntity,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onRecordPayment: (Double, (Result<Unit>) -> Unit) -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     
     val isLent = transaction.transactionType.lowercase() == "lent"
@@ -119,7 +143,7 @@ fun TransactionCard(transaction: TransactionEntity) {
                 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "KES ${String.format(Locale.getDefault(), "%.2f", transaction.amount)}",
+                        text = "KES ${String.format(Locale.getDefault(), "%,.2f", transaction.amount)}",
                         fontFamily = ManropeFamily,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 18.sp,
@@ -145,12 +169,140 @@ fun TransactionCard(transaction: TransactionEntity) {
                     color = contentColor
                 )
                 
-                transaction.dueDateInMillis?.let {
+                // Row for Due Date and Edit/Delete Icons
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Due Date",
+                        fontFamily = ManropeFamily,
+                        fontSize = 14.sp,
+                        color = contentColor.copy(alpha = 0.7f)
+                    )
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = transaction.dueDateInMillis?.let { 
+                                SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(it)) 
+                            } ?: "N/A",
+                            fontFamily = ManropeFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = contentColor,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                        
+                        IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Edit, "Edit", tint = contentColor.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Delete, "Delete", tint = contentColor.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                // Row for Balance and + Payment Button
+                if (transaction.remoteId != null) {
+                    InfoRow(label = "Status", value = transaction.status.replace("_", " "), color = contentColor)
                     InfoRow(
-                        label = "Due Date",
-                        value = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(it)),
+                        label = "Amount Paid",
+                        value = "KES ${String.format(Locale.getDefault(), "%,.2f", transaction.amountPaid)}",
                         color = contentColor
                     )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Balance",
+                                fontFamily = ManropeFamily,
+                                fontSize = 14.sp,
+                                color = contentColor.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                text = "KES ${String.format(Locale.getDefault(), "%,.2f", transaction.balance)}",
+                                fontFamily = ManropeFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 14.sp,
+                                color = contentColor
+                            )
+                        }
+
+                        if (transaction.balance > 0) {
+                            var showPaymentDialog by remember { mutableStateOf(false) }
+                            val context = LocalContext.current
+
+                            Button(
+                                onClick = { showPaymentDialog = true },
+                                modifier = Modifier.height(32.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = contentColor.copy(alpha = 0.15f),
+                                    contentColor = contentColor
+                                ),
+                                border = BorderStroke(1.dp, contentColor.copy(alpha = 0.2f)),
+                                elevation = null
+                            ) {
+                                Text("+ Payment", fontFamily = ManropeFamily, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            if (showPaymentDialog) {
+                                var paymentAmount by remember { mutableStateOf("") }
+                                var isSubmitting by remember { mutableStateOf(false) }
+
+                                AlertDialog(
+                                    onDismissRequest = { if (!isSubmitting) showPaymentDialog = false },
+                                    title = { Text("Record Payment", fontFamily = ManropeFamily, fontWeight = FontWeight.Bold) },
+                                    text = {
+                                        Column {
+                                            Text("Enter amount paid towards this loan:", fontFamily = ManropeFamily)
+                                            Spacer(Modifier.height(8.dp))
+                                            OutlinedTextField(
+                                                value = paymentAmount,
+                                                onValueChange = { paymentAmount = it },
+                                                label = { Text("Amount (KES)") },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                enabled = !isSubmitting
+                                            )
+                                        }
+                                    },
+                                    confirmButton = {
+                                        TextButton(
+                                            enabled = !isSubmitting,
+                                            onClick = {
+                                                val amt = paymentAmount.toDoubleOrNull()
+                                                if (amt != null && amt > 0) {
+                                                    isSubmitting = true
+                                                    onRecordPayment(amt) { result ->
+                                                        isSubmitting = false
+                                                        if (result.isSuccess) {
+                                                            Toast.makeText(context, "Payment recorded", Toast.LENGTH_SHORT).show()
+                                                            showPaymentDialog = false
+                                                        } else {
+                                                            Toast.makeText(context, "Error: ${result.exceptionOrNull()?.message}", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        ) { Text(if (isSubmitting) "Saving..." else "Submit") }
+                                    },
+                                    dismissButton = {
+                                        if (!isSubmitting) {
+                                            TextButton(onClick = { showPaymentDialog = false }) { Text("Cancel") }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
 
                 if (transaction.notes.isNotEmpty()) {
@@ -169,6 +321,8 @@ fun TransactionCard(transaction: TransactionEntity) {
                         color = contentColor
                     )
                 }
+
+
             }
         }
     }

@@ -15,7 +15,15 @@ data class DashboardSummaryResponse(
     val amountIOwe: Double,
     val activeLoansLent: Int,
     val activeLoansBorrowed: Int,
-    val overdueLoans: Int
+    val overdueLoans: Int,
+    val debtAging: Map<String, Double>? = null,
+    val monthlyTrend: List<MonthlyTrend>? = null
+)
+
+data class MonthlyTrend(
+    val month: String,
+    val lent: Double,
+    val borrowed: Double
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +33,7 @@ data class DashboardSummaryResponse(
 data class LoanLentRequest(
     val personName: String,
     val phoneNumber: String,
+    @SerializedName("loanAmount")
     val amountLent: Double,
     val dateLent: String, // yyyy-MM-dd
     val dueDate: String?, // yyyy-MM-dd
@@ -52,6 +61,7 @@ data class LoanLentResponse(
 data class LoanBorrowedRequest(
     val personName: String,
     val phoneNumber: String,
+    @SerializedName("loanAmount")
     val amountBorrowed: Double,
     val dateBorrowed: String, // yyyy-MM-dd
     val dueDate: String?, // yyyy-MM-dd

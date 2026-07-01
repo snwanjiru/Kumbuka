@@ -13,6 +13,7 @@ import app.kumbuka.ui.screens.ForgotPasswordScreen
 import app.kumbuka.ui.screens.HomeScreen
 import app.kumbuka.ui.screens.LoginScreen
 import app.kumbuka.ui.screens.RecordTransactionScreen
+import app.kumbuka.ui.screens.RemindersScreen
 import app.kumbuka.ui.screens.SignUpScreen
 import app.kumbuka.ui.screens.SplashScreen
 import app.kumbuka.ui.screens.TransactionListScreen
@@ -30,6 +31,7 @@ object Routes {
     const val LOGIN              = "login"
     const val FORGOT_PASSWORD    = "forgot_password"
     const val HOME               = "home?tab={tab}"
+    const val REMINDERS          = "reminders"
     const val RECORD_TRANSACTION = "record_transaction/{type}?id={id}"
     const val TRANSACTION_LIST   = "transaction_list"
 }
@@ -62,7 +64,8 @@ object Routes {
 
 @Composable
 fun KumbukaNavGraph(
-    navController: NavHostController = rememberNavController()
+    navController: NavHostController = rememberNavController(),
+    isSystemSplashVisible: Boolean = false
 ) {
     NavHost(
         navController    = navController,
@@ -70,45 +73,24 @@ fun KumbukaNavGraph(
     ) {
 
         // ── 1. SPLASH ──────────────────────────────────────────────────────────
-        // Covers: Scenarios 1, 2, 3, 4, 5, 6
-        //
-        // WHY LaunchedEffect lives HERE and not inside SplashScreen:
-        //   SplashScreen has its own internal LaunchedEffect that calls
-        //   onNavigateToSignUp() after 2.2s. If we passed real lambdas to it
-        //   AND had our own LaunchedEffect here, navigation would fire TWICE.
-        //   Solution: NavGraph owns the routing decision entirely.
-        //   SplashScreen receives empty lambdas {} — it just shows the UI.
-        //
-        // WHY isAlreadyLoggedIn() works offline (Scenario 6):
-        //   TokenManager.isTokenValid() reads from DataStore which is written
-        //   to disk on login. No network call is made — works fully offline
-        //   as long as the JWT has not expired.
-        // ──────────────────────────────────────────────────────────────────────
         composable(route = Routes.SPLASH) {
-            // CHANGED: hiltViewModel() — Hilt creates and injects AuthRepository
-            // automatically. viewModel() would fail because AuthViewModel now
-            // requires constructor injection that only Hilt can provide.
             val viewModel: AuthViewModel = hiltViewModel()
 
             LaunchedEffect(Unit) {
                 delay(2_200)
                 if (viewModel.isAlreadyLoggedIn()) {
-                    // Scenarios 5 & 6 — valid JWT in DataStore, go straight home
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
                 } else {
-                    // Scenarios 1, 2, 3, 4 — no valid token, land on Login
-                    // This ensures users who logout or restart the app see the Login screen.
                     navController.navigate(Routes.LOGIN) {
                         popUpTo(Routes.SPLASH) { inclusive = true }
                     }
                 }
             }
 
-            // Empty lambdas — SplashScreen shows UI only.
-            // NavGraph's LaunchedEffect above owns all navigation.
             SplashScreen(
+                isSystemSplashVisible = isSystemSplashVisible,
                 onNavigateToSignUp = {},
                 onNavigateToHome   = {}
             )
@@ -206,7 +188,17 @@ fun KumbukaNavGraph(
                     val route = if (id != null) "record_transaction/borrowed?id=$id" else "record_transaction/borrowed"
                     navController.navigate(route)
                 },
+                onNavigateToActivity = {
+                    navController.navigate(Routes.REMINDERS)
+                },
                 initialTab = initialTab
+            )
+        }
+
+        // ── 5a. REMINDERS ──────────────────────────────────────────────────────
+        composable(route = Routes.REMINDERS) {
+            RemindersScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 
@@ -239,8 +231,9 @@ fun KumbukaNavGraph(
         // ── 7. TRANSACTION LIST ───────────────────────────────────────────────
         composable(route = Routes.TRANSACTION_LIST) {
             TransactionListScreen(
-                onNavigateToRecord = { type ->
-                    navController.navigate("record_transaction/$type")
+                onNavigateToRecord = { type, id ->
+                    val route = if (id != null) "record_transaction/$type?id=$id" else "record_transaction/$type"
+                    navController.navigate(route)
                 }
             )
         }

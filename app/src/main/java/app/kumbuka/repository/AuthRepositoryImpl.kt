@@ -1,6 +1,7 @@
 package app.kumbuka.repository
 
 import app.kumbuka.data.TokenManager
+import app.kumbuka.data.local.dao.TransactionDao
 import app.kumbuka.network.AuthApiService
 import app.kumbuka.network.ForgotPasswordRequest
 import app.kumbuka.network.LoginRequest
@@ -32,8 +33,9 @@ import javax.inject.Singleton
 
 @Singleton
 class AuthRepositoryImpl @Inject constructor(
-    private val api:          AuthApiService,
-    private val tokenManager: TokenManager
+    private val api:            AuthApiService,
+    private val tokenManager:   TokenManager,
+    private val transactionDao: TransactionDao
 ) : AuthRepository {
 
     // A dedicated IO scope for fire-and-forget operations like signOut().
@@ -56,11 +58,12 @@ class AuthRepositoryImpl @Inject constructor(
         val response = api.register(RegisterRequest(name, email, phone, password, confirmPassword))
         if (response.isSuccessful) {
             val body = response.body()!!
-            // Store the JWT so the user is immediately considered logged in.
-            // Since the backend doesn't send an expiry, we use DEFAULT_EXPIRY_MS (24h).
+            // Store the JWT, user name and email so the user is immediately considered logged in.
             tokenManager.saveTokens(
                 accessToken  = body.token,
                 refreshToken = body.refreshToken,
+                userName     = body.name,
+                userEmail    = body.email,
                 expiresInMs  = TokenManager.DEFAULT_EXPIRY_MS
             )
             Result.success(Unit)
@@ -80,6 +83,8 @@ class AuthRepositoryImpl @Inject constructor(
             tokenManager.saveTokens(
                 accessToken  = body.token,
                 refreshToken = body.refreshToken,
+                userName     = body.name,
+                userEmail    = body.email,
                 expiresInMs  = TokenManager.DEFAULT_EXPIRY_MS
             )
             Result.success(Unit)
@@ -115,6 +120,8 @@ class AuthRepositoryImpl @Inject constructor(
             tokenManager.saveTokens(
                 accessToken  = body.token,
                 refreshToken = body.refreshToken,
+                userName     = body.name,
+                userEmail    = body.email,
                 expiresInMs  = TokenManager.DEFAULT_EXPIRY_MS
             )
             Result.success(Unit)
@@ -143,12 +150,11 @@ class AuthRepositoryImpl @Inject constructor(
 
     // ── Sign out ──────────────────────────────────────────────────────────────
     // Non-suspend — navigation away from Home happens immediately. Token clearing
-    // runs in the background on the IO dispatcher. If the clear fails (extremely
-    // unlikely with DataStore), the expired token will be rejected by the backend
-    // on the next launch anyway, which re-triggers the sign-out flow.
+    // and database clearing run in the background on the IO dispatcher.
     override fun signOut() {
         ioScope.launch {
             tokenManager.clearTokens()
+            transactionDao.clearAll()
         }
     }
 

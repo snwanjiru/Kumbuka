@@ -6,7 +6,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import app.kumbuka.navigation.KumbukaNavGraph
 import app.kumbuka.ui.theme.KumbukaColors
@@ -28,6 +32,21 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // ── System Splash Screen (Icon Launcher) ─────────────────────────────
+        // installSplashScreen() must be called BEFORE super.onCreate()
+        val splashScreen = installSplashScreen()
+        
+        // This condition keeps the system splash screen visible.
+        // Once keepSplashScreen becomes false, it transitions to our Compose UI.
+        var keepSplashScreen by mutableStateOf(true)
+        splashScreen.setKeepOnScreenCondition { keepSplashScreen }
+
+        // Start a simple timer to control the duration.
+        // You can change 1000L (1 second) to whatever you prefer.
+        window.decorView.postDelayed({
+            keepSplashScreen = false
+        }, 1000L)
+
         super.onCreate(savedInstanceState)
 
         // Draw content behind system bars so each screen can control its own
@@ -41,10 +60,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color    = KumbukaColors.Background
                 ) {
-                    // All navigation and screen composition happens here.
-                    // ViewModels are created via hiltViewModel() inside NavGraph
-                    // — MainActivity has no knowledge of them.
-                    KumbukaNavGraph()
+                    // Pass the splash state so the Compose animation knows when to start
+                    KumbukaNavGraph(isSystemSplashVisible = keepSplashScreen)
                 }
             }
         }

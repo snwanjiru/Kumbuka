@@ -1,5 +1,15 @@
 package app.kumbuka.ui.screens
 
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -7,6 +17,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,13 +29,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.outlined.Notes
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PanTool
-import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,17 +47,28 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -68,6 +88,8 @@ import app.kumbuka.ui.theme.ManropeFamily
 import app.kumbuka.viewmodel.HomeTab
 import app.kumbuka.viewmodel.HomeViewModel
 import app.kumbuka.viewmodel.TabState
+import app.kumbuka.viewmodel.ContactSummary
+import app.kumbuka.viewmodel.CashFlowGroup
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -100,17 +122,69 @@ fun HomeScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
 
+    val context = LocalContext.current
+    val activity = remember(context) { context as? Activity }
+
+    // ── Notification Permission Launcher ─────────────────────────────────────
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        // Handle result if needed
+    }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasPermission) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     // ── Pager state for swipe navigation ─────────────────────────────────────
     val pagerState = rememberPagerState(
         initialPage = if (initialTab == HomeTab.Dashboard) 0 else 1,
         pageCount = { 2 }
     )
 
+    // ── Nested scroll to open drawer from Dashboard swipe ────────────────────
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // If on Dashboard and swiping right, trigger drawer open
+                if (pagerState.currentPage == 0 && available.x > 40f && source == NestedScrollSource.Drag) {
+                    if (drawerState.isClosed) {
+                        coroutineScope.launch {
+                            drawerState.open()
+                        }
+                        return available // Consume scroll to prevent simultaneous exit
+                    } else {
+                        // Drawer already open, swipe right again -> Leave app
+                        activity?.finish()
+                        return available
+                    }
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     // ── Collect ViewModel state ───────────────────────────────────────────────
     val selectedTab by viewModel.selectedTab.collectAsState()
     val tabState by viewModel.tabState.collectAsState()
     val transactions by viewModel.allTransactions.collectAsState()
     val dashboardSummary by viewModel.dashboardSummary.collectAsState()
+    val contactSummaries by viewModel.contactSummaries.collectAsState()
+    val cashFlowGroups by viewModel.cashFlowGroups.collectAsState()
+    val userName by viewModel.userName.collectAsState()
+    
+    val searchQuery by viewModel.searchQuery.collectAsState()
+    val selectedFilters by viewModel.selectedFilters.collectAsState()
+    val selectedDueOption by viewModel.selectedDueOption.collectAsState()
 
     // ── Sync Pager with ViewModel ────────────────────────────────────────────
     // When user swipes, update the ViewModel so the header highlights correct tab
@@ -133,10 +207,14 @@ fun HomeScreen(
     }
 
     // ── Main layout wrapped in navigation drawer ──────────────────────────────
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             HomeDrawerContent(
+                userName           = userName,
                 onLogOut           = onLogOut,
                 onNavigateToCircles = onNavigateToCircles,
                 onNavigateToActivity = onNavigateToActivity,
@@ -145,10 +223,20 @@ fun HomeScreen(
             )
         }
     ) {
+        // Intercept back gesture on Dashboard to follow the open-then-exit flow
+        BackHandler(enabled = pagerState.currentPage == 0) {
+            if (drawerState.isClosed) {
+                coroutineScope.launch { drawerState.open() }
+            } else {
+                activity?.finish()
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(KumbukaColors.Background)
+                .nestedScroll(nestedScrollConnection)
         ) {
             // ── FIXED HEADER: Top Bar + Hero Section + Straddling Logo ───────
             Box(
@@ -159,7 +247,7 @@ fun HomeScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(TOP_BAR_HEIGHT)
+                            .height(if (isLandscape) 48.dp else TOP_BAR_HEIGHT)
                             .background(KumbukaColors.Background)
                             .statusBarsPadding()
                     ) {
@@ -183,7 +271,10 @@ fun HomeScreen(
                             .fillMaxWidth()
                             .background(KumbukaColors.Primary)
                             .padding(horizontal = 24.dp)
-                            .padding(top = LOGO_HALF + 40.dp, bottom = 12.dp)
+                            .padding(
+                                top = if (isLandscape) 12.dp else (LOGO_HALF + 40.dp), 
+                                bottom = if (isLandscape) 8.dp else 10.dp
+                            )
                     ) {
                         Column {
                             // ── Tab row (2 columns) ───────────────────────────
@@ -271,81 +362,89 @@ fun HomeScreen(
 
                 // ── Straddling logo circle ───────────────────────────────
                 // Center sits exactly on the top-bar bottom edge
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = TOP_BAR_HEIGHT - LOGO_HALF)
-                        .size(LOGO_CIRCLE)
-                        .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
-                        .background(Color.White, CircleShape)
-                ) {
-                    KumbukaLogo(size = LOGO_CIRCLE * 0.68f)
+                if (!isLandscape) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = TOP_BAR_HEIGHT - LOGO_HALF)
+                            .size(LOGO_CIRCLE)
+                            .shadow(elevation = 4.dp, shape = CircleShape, clip = false)
+                            .background(Color.White, CircleShape)
+                    ) {
+                        KumbukaLogo(size = LOGO_CIRCLE * 0.68f)
+                    }
                 }
             }
 
             // ── SCROLLABLE BODY: content starts below the fixed hero ─────────
-            HorizontalPager(
-                state    = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                verticalAlignment = Alignment.Top
-            ) { pageIndex ->
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // ── Tab content — varies based on pageIndex ──────────────────
-                    when (tabState) {
-                        is TabState.Loading -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    color = KumbukaColors.Primary,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                            }
-                        }
-                        is TabState.Error -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    (tabState as TabState.Error).message,
-                                    fontFamily = ManropeFamily,
-                                    color = KumbukaColors.Error,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                        else -> {
-                            if (pageIndex == 0) {
-                                if (transactions.isEmpty()) {
-                                    EmptyDashboard()
-                                } else {
-                                    DashboardContent(dashboardSummary)
-                                }
+            Box(modifier = Modifier.fillMaxSize()) {
+                HorizontalPager(
+                    state    = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.Top
+                ) { pageIndex ->
+                    Column(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        if (pageIndex == 0) {
+                            if (transactions.isEmpty()) {
+                                EmptyDashboard()
                             } else {
-                                CashFlowTabContent(
-                                    transactions = transactions,
-                                    onRecordLent = { onNavigateToRecordLent(null) },
-                                    onRecordBorrowed = { onNavigateToRecordBorrowed(null) },
-                                    onEditTransaction = { transaction ->
-                                        if (transaction.transactionType == "lent") {
-                                            onNavigateToRecordLent(transaction.id)
-                                        } else {
-                                            onNavigateToRecordBorrowed(transaction.id)
-                                        }
-                                    },
-                                    onDeleteTransaction = { viewModel.deleteTransaction(it) }
+                                DashboardContent(
+                                    summary = dashboardSummary,
+                                    contactSummaries = contactSummaries
                                 )
                             }
+                        } else {
+                            CashFlowTabContent(
+                                groups = cashFlowGroups,
+                                searchQuery = searchQuery,
+                                selectedFilters = selectedFilters,
+                                selectedDueOption = selectedDueOption,
+                                onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                                onToggleFilter = { viewModel.toggleFilter(it) },
+                                onUpdateDueOption = { viewModel.updateDueOption(it) },
+                                onClearFilters = { viewModel.clearFilters() },
+                                onRecordLent = { onNavigateToRecordLent(null) },
+                                onRecordBorrowed = { onNavigateToRecordBorrowed(null) },
+                                onEditTransaction = { transaction ->
+                                    if (transaction.transactionType == "lent") {
+                                        onNavigateToRecordLent(transaction.id)
+                                    } else {
+                                        onNavigateToRecordBorrowed(transaction.id)
+                                    }
+                                },
+                                onDeleteTransaction = { viewModel.deleteTransaction(it) },
+                                onRecordPayment = { transaction, amount, onResult ->
+                                    viewModel.recordPayment(transaction, amount, onResult)
+                                },
+                                hasAnyTransactions = transactions.isNotEmpty()
+                            )
                         }
+                    }
+                }
+
+                // ── OVERLAY: Loading & Error states ──────────────────────────
+                // This prevents the Pager from being destroyed when syncing
+                if (tabState is TabState.Loading && transactions.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(KumbukaColors.Background),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = KumbukaColors.Primary)
+                    }
+                } else if (tabState is TabState.Error) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(KumbukaColors.Background),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            (tabState as TabState.Error).message,
+                            fontFamily = ManropeFamily,
+                            color = KumbukaColors.Error,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
@@ -358,154 +457,663 @@ fun HomeScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DashboardContent(summary: DashboardSummaryResponse?) {
+private fun DashboardContent(
+    summary: DashboardSummaryResponse?,
+    contactSummaries: List<ContactSummary>
+) {
     if (summary == null) {
         EmptyDashboard()
         return
     }
 
     var isVisible by remember { mutableStateOf(false) }
-    val locale = LocalConfiguration.current.locales.get(0)
+    
+    val lentColor = Color(0xFF5F0500) // Burgundy
+    val borrowedColor = Color(0xFFB52614) // Red
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 24.dp)
             .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.Start
     ) {
         Spacer(Modifier.height(24.dp))
 
-        // ── Main Overview Card ───────────────────────────────────────────────
-        Card(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = KumbukaColors.SurfaceContainerLow),
-            shape = RoundedCornerShape(24.dp)
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Balance Overview",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = KumbukaColors.OnSurfaceVariant
-                    )
-                    
-                    PrivacyToggle(
-                        isVisible = isVisible,
-                        onToggle = { isVisible = !isVisible },
-                        tint = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.6f)
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    SummaryStat(
-                        label = "Lent",
-                        value = if (isVisible) "KSh ${String.format(locale, "%,.0f", summary.totalLent)}" else "••••",
-                        color = Color(0xFF5F0500),
-                        modifier = Modifier.weight(1f)
-                    )
-                    SummaryStat(
-                        label = "Borrowed",
-                        value = if (isVisible) "KSh ${String.format(locale, "%,.0f", summary.totalBorrowed)}" else "••••",
-                        color = Color(0xFFB52614),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        // ── Details Grid ─────────────────────────────────────────────────────
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            DashboardSmallCard(
-                label = "Owed to Me",
-                value = if (isVisible) "KSh ${String.format(locale, "%,.0f", summary.amountOwedToMe)}" else "••••",
-                icon = Icons.Outlined.Shield, // placeholder
-                modifier = Modifier.weight(1f)
+            Text(
+                "Your Pockets",
+                fontFamily = ManropeFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 18.sp,
+                color = KumbukaColors.Primary
             )
-            DashboardSmallCard(
-                label = "I Owe",
-                value = if (isVisible) "KSh ${String.format(locale, "%,.0f", summary.amountIOwe)}" else "••••",
-                icon = Icons.Default.PanTool, // placeholder
-                modifier = Modifier.weight(1f)
+
+            PrivacyToggle(
+                isVisible = isVisible,
+                onToggle = { isVisible = !isVisible },
+                tint = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.6f),
+                iconContainerSize = 65.dp
             )
         }
 
         Spacer(Modifier.height(16.dp))
 
-        // ── Activity Summary ─────────────────────────────────────────────────
-        Card(
+        // ── HERO: The Two Pockets (Visual Jars) ─────────────────────────────
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = KumbukaColors.SurfaceContainerLowest),
-            border = BorderStroke(1.dp, KumbukaColors.OutlineVariant),
-            shape = RoundedCornerShape(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            MoneyJarCard(
+                label = "Lent",
+                amount = summary.amountOwedToMe,
+                totalAmount = summary.totalLent,
+                isVisible = isVisible,
+                color = lentColor,
+                modifier = Modifier.weight(1f)
+            )
+            MoneyJarCard(
+                label = "Borrowed",
+                amount = summary.amountIOwe,
+                totalAmount = summary.totalBorrowed,
+                isVisible = isVisible,
+                color = borrowedColor,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(32.dp))
+
+        // ── TOP CONTACTS: Horizontal Scroll ──────────────────────────────────
+        Text(
+            "My People",
+            fontFamily = ManropeFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = KumbukaColors.Primary
+        )
+        
+        Spacer(Modifier.height(16.dp))
+
+        if (contactSummaries.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .background(KumbukaColors.SurfaceContainerLow, RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
-                    "Loan Activity",
+                    "No contacts yet",
                     fontFamily = ManropeFamily,
-                    fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
-                    color = KumbukaColors.Primary
+                    color = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.5f)
                 )
-                Spacer(Modifier.height(12.dp))
-                ActivityRow("Active Lent", summary.activeLoansLent.toString())
-                ActivityRow("Active Borrowed", summary.activeLoansBorrowed.toString())
-                ActivityRow("Overdue Loans", summary.overdueLoans.toString(), isAlert = summary.overdueLoans > 0)
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                contactSummaries.forEach { contact ->
+                    ContactCircleItem(contact)
+                }
             }
         }
+
+        Spacer(Modifier.height(32.dp))
+
+        // ── STATS SUMMARY (Simplified) ──────────────────────────────────────
+        Text(
+            "Quick Stats",
+            fontFamily = ManropeFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = KumbukaColors.Primary
+        )
+        Spacer(Modifier.height(12.dp))
+        
+        DashboardSmallCard(
+            label = "OVERDUE LOANS",
+            value = summary.overdueLoans.toString(),
+            icon = Icons.Default.History,
+            color = Color(0xFFE84C3D),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(32.dp))
+
+        // ── TREND CHART ──────────────────────────────────────────────────────
+        Text(
+            "Money Flow Trend",
+            fontFamily = ManropeFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            color = KumbukaColors.Primary
+        )
+        Spacer(Modifier.height(16.dp))
+        
+        MoneyTrendChart(
+            trendData = summary.monthlyTrend ?: emptyList(),
+            lentColor = lentColor,
+            borrowedColor = borrowedColor,
+            modifier = Modifier.fillMaxWidth().height(200.dp)
+        )
 
         Spacer(Modifier.height(40.dp))
     }
 }
 
 @Composable
-private fun SummaryStat(label: String, value: String, color: Color, modifier: Modifier) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy((-2).dp)) {
-        Text(label, fontFamily = ManropeFamily, fontSize = 12.sp, color = KumbukaColors.OnSurfaceVariant)
-        Text(value, fontFamily = ManropeFamily, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = color)
-    }
-}
+private fun MoneyTrendChart(
+    trendData: List<app.kumbuka.network.MonthlyTrend>,
+    lentColor: Color,
+    borrowedColor: Color,
+    modifier: Modifier = Modifier
+) {
+    if (trendData.isEmpty()) return
 
-@Composable
-private fun DashboardSmallCard(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, KumbukaColors.OutlineVariant),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy((-2).dp)) {
-            Icon(icon, null, tint = KumbukaColors.Primary.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(label, fontFamily = ManropeFamily, fontSize = 12.sp, color = KumbukaColors.OnSurfaceVariant)
-            Text(value, fontFamily = ManropeFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = KumbukaColors.Primary)
+    // Find the max value to scale the chart, ensuring we have at least a small scale even if all are 0
+    val maxVal = trendData.flatMap { listOf(it.lent, it.borrowed) }.maxOrNull()?.toFloat()?.coerceAtLeast(100f) ?: 100f
+    val pointSpacing = 70.dp
+    // Ensure the chart is at least as wide as the screen
+    val chartWidth = (pointSpacing * (trendData.size - 1)).coerceAtLeast(1.dp)
+
+    Column(modifier = modifier) {
+        Row(modifier = Modifier.weight(1f)) {
+            // ── Y-AXIS LABELS ──────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(vertical = 12.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.End
+            ) {
+                val gridLineCount = 4
+                for (i in 0..gridLineCount) {
+                    val value = maxVal * (gridLineCount - i) / gridLineCount
+                    Text(
+                        text = when {
+                            value >= 1_000_000 -> "${String.format("%.1f", value / 1_000_000)}M"
+                            value >= 1000 -> "${(value / 1000).toInt()}k"
+                            else -> value.toInt().toString()
+                        },
+                        fontFamily = ManropeFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            // ── CHART AREA ──────────────────────────────
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .horizontalScroll(rememberScrollState(initial = Int.MAX_VALUE))
+            ) {
+                Canvas(modifier = Modifier
+                    .width(chartWidth.coerceAtLeast(200.dp)) // Minimum width to avoid squishing
+                    .fillMaxHeight()
+                    .padding(vertical = 12.dp)
+                ) {
+                    val width = size.width
+                    val height = size.height
+                    val spacing = if (trendData.size > 1) width / (trendData.size - 1) else width
+                    
+                    fun getY(value: Double) = height - (value.toFloat() / maxVal * height)
+
+                    // ── GRID LINES ──────────────────────────────
+                    val gridLineCount = 4
+                    for (i in 0..gridLineCount) {
+                        val y = height * i / gridLineCount
+                        drawLine(
+                            color = Color.LightGray.copy(alpha = 0.2f),
+                            start = Offset(0f, y),
+                            end = Offset(width, y),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                    
+                    // ── AXIS LINES ──────────────────────────────
+                    // Y-Axis
+                    drawLine(
+                        color = KumbukaColors.Outline.copy(alpha = 0.3f),
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, height),
+                        strokeWidth = 2.dp.toPx()
+                    )
+                    // X-Axis
+                    drawLine(
+                        color = KumbukaColors.Outline.copy(alpha = 0.3f),
+                        start = Offset(0f, height),
+                        end = Offset(width, height),
+                        strokeWidth = 2.dp.toPx()
+                    )
+
+                    // ── SMOOTH CURVE FUNCTION ──────────────────────────────
+                    fun createSmoothPath(data: List<Double>): Path {
+                        val path = Path()
+                        if (data.isEmpty()) return path
+                        
+                        data.forEachIndexed { i, value ->
+                            val x = i * spacing
+                            val y = getY(value)
+                            if (i == 0) {
+                                path.moveTo(x, y)
+                            } else {
+                                val prevX = (i - 1) * spacing
+                                val prevY = getY(data[i - 1])
+                                val controlX1 = prevX + spacing / 2.5f
+                                val controlX2 = x - spacing / 2.5f
+                                path.cubicTo(controlX1, prevY, controlX2, y, x, y)
+                            }
+                        }
+                        return path
+                    }
+
+                    // ── Draw Trend Lines ──────────────────────────────
+                    val lentValues = trendData.map { it.lent }
+                    val lentPath = createSmoothPath(lentValues)
+                    val borrowedValues = trendData.map { it.borrowed }
+                    val borrowedPath = createSmoothPath(borrowedValues)
+
+                    // Areas (Fills)
+                    if (trendData.size > 1) {
+                        drawPath(
+                            Path().apply {
+                                addPath(lentPath)
+                                lineTo((trendData.size - 1) * spacing, height)
+                                lineTo(0f, height)
+                                close()
+                            },
+                            brush = Brush.verticalGradient(listOf(lentColor.copy(alpha = 0.15f), Color.Transparent))
+                        )
+                        drawPath(
+                            Path().apply {
+                                addPath(borrowedPath)
+                                lineTo((trendData.size - 1) * spacing, height)
+                                lineTo(0f, height)
+                                close()
+                            },
+                            brush = Brush.verticalGradient(listOf(borrowedColor.copy(alpha = 0.15f), Color.Transparent))
+                        )
+                    }
+
+                    // Strokes (The actual lines)
+                    drawPath(lentPath, lentColor, style = Stroke(width = 3.dp.toPx(), join = StrokeJoin.Round))
+                    drawPath(borrowedPath, borrowedColor, style = Stroke(width = 3.dp.toPx(), join = StrokeJoin.Round))
+
+                    // Emphasis Points (Dots)
+                    trendData.forEachIndexed { i, data ->
+                        val x = i * spacing
+                        drawCircle(lentColor, radius = 4.dp.toPx(), center = Offset(x, getY(data.lent)))
+                        drawCircle(borrowedColor, radius = 4.dp.toPx(), center = Offset(x, getY(data.borrowed)))
+                    }
+                }
+            }
+        }
+        
+        // Month labels (aligned with chart area)
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Spacer(Modifier.width(42.dp)) // Matches Y-labels width
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState(initial = Int.MAX_VALUE), enabled = false)
+            ) {
+                val labelsWidth = (pointSpacing * (trendData.size - 1)).coerceAtLeast(200.dp)
+                Row(modifier = Modifier.width(labelsWidth), horizontalArrangement = Arrangement.SpaceBetween) {
+                    trendData.forEach { data ->
+                        Text(
+                            data.month.split(" ").first(), // Show only month name to save space
+                            fontFamily = ManropeFamily, 
+                            fontSize = 9.sp, 
+                            fontWeight = FontWeight.Medium,
+                            color = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.width(if (trendData.size > 1) labelsWidth / (trendData.size - 1) else labelsWidth),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+        
+        Spacer(Modifier.height(16.dp))
+        
+        Row(
+            modifier = Modifier.padding(start = 42.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            TrendLegendItem("Lent", lentColor)
+            TrendLegendItem("Borrowed", borrowedColor)
         }
     }
 }
 
 @Composable
-private fun ActivityRow(label: String, value: String, isAlert: Boolean = false) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+private fun TrendLegendItem(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(12.dp, 2.dp).background(color))
+        Spacer(Modifier.width(4.dp))
+        Text(label, fontFamily = ManropeFamily, fontSize = 10.sp, color = KumbukaColors.OnSurfaceVariant)
+    }
+}
+
+@Composable
+private fun MoneyJarCard(
+    label: String,
+    amount: Double,
+    totalAmount: Double,
+    isVisible: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.height(180.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(24.dp)
     ) {
-        Text(label, fontFamily = ManropeFamily, fontSize = 14.sp, color = KumbukaColors.OnSurfaceVariant)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(color.copy(alpha = 0.1f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (label == "Lent") Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                        contentDescription = null,
+                        tint = color,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = Color(0xFF4CAF50))) {
+                            append("$ ")
+                        }
+                        withStyle(SpanStyle(color = color)) {
+                            append(label)
+                        }
+                    },
+                    fontFamily = ManropeFamily,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Text(
+                    if (isVisible) "KSh ${String.format(Locale.getDefault(), "%,.0f", amount)}" else "••••",
+                    fontFamily = ManropeFamily,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = color
+                )
+            }
+
+            // Repayment Progress Bar
+            val progress = if (totalAmount > 0) ((totalAmount - amount) / totalAmount).coerceIn(0.0, 1.0).toFloat() else 0f
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Repayment Progress",
+                    fontFamily = ManropeFamily,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = color.copy(alpha = 0.6f)
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(8.dp)
+                            .background(color.copy(alpha = 0.1f), CircleShape)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progress.coerceAtLeast(0.01f)) // Ensure at least a tiny bit is visible if progress is very small
+                                .fillMaxHeight()
+                                .background(color, CircleShape)
+                        )
+                    }
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        fontFamily = ManropeFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = color
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContactCircleItem(contact: ContactSummary) {
+    val borderColor = if (contact.isOverdue) Color(0xFFE84C3D) else Color(0xFF4CAF50)
+    
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(70.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .drawBehind {
+                    drawCircle(
+                        color = borderColor,
+                        style = Stroke(width = 3.dp.toPx())
+                    )
+                }
+                .padding(4.dp)
+                .background(KumbukaColors.SurfaceContainerHigh, CircleShape)
+                .clip(CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                contact.name.take(1).uppercase(),
+                fontFamily = ManropeFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 24.sp,
+                color = KumbukaColors.Primary
+            )
+        }
+        
+        Spacer(Modifier.height(8.dp))
+        
         Text(
-            value, 
-            fontFamily = ManropeFamily, 
-            fontWeight = FontWeight.Bold, 
-            fontSize = 14.sp, 
-            color = if (isAlert) KumbukaColors.Error else KumbukaColors.Primary
+            contact.name.split(" ").first(),
+            fontFamily = ManropeFamily,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = KumbukaColors.OnSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun DebtAgingChart(data: Map<String, Double>, modifier: Modifier) {
+    val maxValue = (data.values.maxOrNull() ?: 0.0).toFloat().coerceAtLeast(1f)
+    val labels = listOf("1-7 Days", "8-30 Days", "30+ Days")
+    val colors = listOf(Color(0xFFFFB4AB), Color(0xFFBA1A1A), Color(0xFF690005)) // Light red to Dark Red
+
+    Row(
+        modifier = modifier.padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        labels.forEachIndexed { index, label ->
+            val value = data[label]?.toFloat() ?: 0f
+            val barHeightRatio = value / maxValue
+            
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                // Bar Value
+                if (value > 0) {
+                    Text(
+                        "KSh ${String.format(Locale.getDefault(), "%.0f", value)}",
+                        fontFamily = ManropeFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors[index]
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                
+                // The Bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(barHeightRatio.coerceAtLeast(0.05f) * 0.8f) // Scale to 80% of height
+                        .background(colors[index], RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                )
+                
+                Spacer(Modifier.height(8.dp))
+                
+                // Label
+                Text(
+                    label,
+                    fontFamily = ManropeFamily,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = KumbukaColors.OnSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DonutChart(data: List<Pair<Float, Color>>, modifier: Modifier) {
+    val total = data.sumOf { it.first.toDouble() }.toFloat()
+    
+    Canvas(modifier = modifier) {
+        var startAngle = -90f
+        
+        if (total == 0f) {
+            drawCircle(
+                color = Color.LightGray.copy(alpha = 0.3f),
+                style = Stroke(width = 40f)
+            )
+        } else {
+            data.forEach { (value, color) ->
+                val sweepAngle = (value / total) * 360f
+                drawArc(
+                    color = color,
+                    startAngle = startAngle,
+                    sweepAngle = sweepAngle,
+                    useCenter = false,
+                    style = Stroke(width = 40f)
+                )
+                startAngle += sweepAngle
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChartLegend(items: List<Pair<String, Color>>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.forEach { (label, color) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(color, RoundedCornerShape(2.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    label,
+                    fontFamily = ManropeFamily,
+                    fontSize = 10.sp,
+                    color = KumbukaColors.OnSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardSmallCard(
+    label: String, 
+    value: String, 
+    icon: ImageVector, 
+    color: Color,
+    modifier: Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    label, 
+                    fontFamily = ManropeFamily, 
+                    fontSize = 10.sp, 
+                    fontWeight = FontWeight.Bold,
+                    color = KumbukaColors.OnSurfaceVariant.copy(alpha = 0.5f)
+                )
+                Text(
+                    value, 
+                    fontFamily = ManropeFamily, 
+                    fontWeight = FontWeight.ExtraBold, 
+                    fontSize = 18.sp, 
+                    color = KumbukaColors.Primary
+                )
+            }
+            
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(color.copy(alpha = 0.1f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon, 
+                    null, 
+                    tint = color, 
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
     }
 }
 
@@ -515,6 +1123,7 @@ private fun ActivityRow(label: String, value: String, isAlert: Boolean = false) 
 
 @Composable
 private fun HomeDrawerContent(
+    userName: String,
     onLogOut: () -> Unit,
     onNavigateToCircles: () -> Unit,
     onNavigateToActivity: () -> Unit,
@@ -525,107 +1134,264 @@ private fun HomeDrawerContent(
         modifier = Modifier
             .fillMaxHeight()
             .width(280.dp)
-            .background(KumbukaColors.SurfaceContainerLowest)
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF0D1D2B), Color(0xFF394859))
+                )
+            )
     ) {
-        // ── Header with close button ──────────────────────────────────────────
+        // ── Header ────────────────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .padding(8.dp),
-            contentAlignment = Alignment.TopEnd
+                .statusBarsPadding()
+                .padding(top = 24.dp, bottom = 24.dp, start = 24.dp, end = 24.dp)
         ) {
-            IconButton(onClick = onDrawerClose) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "Close menu",
-                    tint               = KumbukaColors.Primary,
-                    modifier           = Modifier.size(24.dp)
-                )
-            }
-        }
-
-        HorizontalDivider(color = KumbukaColors.OutlineVariant)
-
-        // ── Menu items ────────────────────────────────────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 16.dp, vertical = 20.dp)
-        ) {
-            listOf(
-                "My Circles" to onNavigateToCircles,
-                "Activity" to onNavigateToActivity,
-                "Settings" to onNavigateToSettings
-            ).forEach { (label, onClick) ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                // User Profile Symbol in Rounded Box
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "User Profile",
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+                
+                Spacer(Modifier.height(16.dp))
+                
                 Text(
-                    label,
+                    userName,
                     fontFamily = ManropeFamily,
-                    fontSize   = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color      = KumbukaColors.Primary,
-                    modifier   = Modifier
-                        .fillMaxWidth()
-                        .clickable(remember { MutableInteractionSource() }, null) {
-                            onDrawerClose()
-                            onClick()
-                        }
-                        .padding(vertical = 16.dp)
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 20.sp,
+                    color = Color.White,
+                    textAlign = TextAlign.Center
                 )
+
             }
         }
 
-        HorizontalDivider(color = KumbukaColors.OutlineVariant)
-
-        // ── Logout at bottom ──────────────────────────────────────────────────
+        // ── Scrollable Menu ───────────────────────────────────────────────────
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 16.dp)
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 16.dp)
         ) {
-            TextButton(
+            DrawerSectionHeader("NAVIGATE")
+            DrawerItem(
+                icon = Icons.Outlined.Notifications,
+                label = "Active Reminders",
+                onClick = {
+                    onDrawerClose()
+                    onNavigateToActivity()
+                }
+            )
+            DrawerItem(
+                icon = Icons.Outlined.Paid,
+                label = "My Circles",
+                onClick = {
+                    onDrawerClose()
+                    onNavigateToCircles()
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            DrawerSectionHeader("DATA")
+            DrawerItem(
+                icon = Icons.Outlined.Save,
+                label = "Backup",
+                onClick = {}
+            )
+            DrawerItem(
+                icon = Icons.Outlined.CloudUpload,
+                label = "Restore",
+                onClick = {}
+            )
+
+            Spacer(Modifier.height(16.dp))
+            DrawerSectionHeader("PREFERENCES")
+            
+            var isDarkMode by remember { mutableStateOf(true) }
+            DrawerItem(
+                icon = Icons.Outlined.DarkMode,
+                label = "Dark Mode",
+                onClick = { isDarkMode = !isDarkMode },
+                trailing = {
+                    Switch(
+                        checked = isDarkMode,
+                        onCheckedChange = { isDarkMode = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFFFFDAD6),
+                            checkedTrackColor = Color(0xFFFFDAD6).copy(alpha = 0.5f)
+                        )
+                    )
+                }
+            )
+            
+            DrawerItem(
+                icon = Icons.Outlined.Language,
+                label = "Language",
+                onClick = {},
+                trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "English",
+                            fontFamily = ManropeFamily,
+                            fontSize = 13.sp,
+                            color = Color.White.copy(alpha = 0.5f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            null,
+                            tint = Color.White.copy(alpha = 0.3f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            DrawerSectionHeader("SUPPORT")
+            DrawerItem(
+                icon = Icons.Outlined.Policy,
+                label = "Privacy Policy",
+                onClick = {}
+            )
+            DrawerItem(
+                icon = Icons.Outlined.Email,
+                label = "Contact",
+                onClick = {}
+            )
+            DrawerItem(
+                icon = Icons.AutoMirrored.Filled.Logout,
+                label = "Log Out",
                 onClick = {
                     onDrawerClose()
                     onLogOut()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    "Log Out",
-                    fontFamily = ManropeFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize   = 14.sp,
-                    color      = KumbukaColors.Secondary
-                )
-            }
+                }
+            )
+        }
+
+        // ── Footer ────────────────────────────────────────────────────────────
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Version 1.0.0",
+                fontFamily = ManropeFamily,
+                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.3f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DrawerSectionHeader(title: String) {
+    Text(
+        text = title,
+        fontFamily = ManropeFamily,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color.White.copy(alpha = 0.4f),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+    )
+}
+
+@Composable
+private fun DrawerItem(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = Color(0xFFFFDAD6),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        
+        Spacer(Modifier.width(16.dp))
+        
+        Text(
+            text = label,
+            fontFamily = ManropeFamily,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.weight(1f)
+        )
+        
+        if (trailing != null) {
+            trailing()
+        } else {
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.2f),
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
 
 @Composable
 private fun CashFlowTabContent(
-    transactions: List<TransactionEntity>,
+    groups: List<CashFlowGroup>,
+    searchQuery: String,
+    selectedFilters: Set<String>,
+    selectedDueOption: String?,
+    onSearchQueryChange: (String) -> Unit,
+    onToggleFilter: (String) -> Unit,
+    onUpdateDueOption: (String?) -> Unit,
+    onClearFilters: () -> Unit,
     onRecordLent: () -> Unit,
     onRecordBorrowed: () -> Unit,
     onEditTransaction: (TransactionEntity) -> Unit,
-    onDeleteTransaction: (TransactionEntity) -> Unit
+    onDeleteTransaction: (TransactionEntity) -> Unit,
+    onRecordPayment: (TransactionEntity, Double, (Result<Unit>) -> Unit) -> Unit,
+    hasAnyTransactions: Boolean
 ) {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    
     var expandedGroupId by remember { mutableStateOf<String?>(null) }
     var transactionToDelete by remember { mutableStateOf<TransactionEntity?>(null) }
     var isForgiven by remember { mutableStateOf(false) }
     var isBlacklisted by remember { mutableStateOf(false) }
+    var isFilterExpanded by remember { mutableStateOf(false) }
+    var showDueMenu by remember { mutableStateOf(false) }
+    val dueOptions = remember { listOf("1 Day", "2 Days", "3 Days", "4 Days", "5 Days", "6 Days", "1 Week", "2 Weeks") }
 
     if (transactionToDelete != null) {
-        val isLent = transactionToDelete!!.transactionType == "lent"
-        val isGrouped = transactions.count { 
-            val normalizedPhone = it.phoneNumber.filter { char -> char.isDigit() }.takeLast(9)
-            val targetPhone = transactionToDelete!!.phoneNumber.filter { char -> char.isDigit() }.takeLast(9)
-            it.name.equals(transactionToDelete!!.name, ignoreCase = true) && 
-            normalizedPhone == targetPhone && 
-            it.transactionType == transactionToDelete!!.transactionType
-        } > 1
-
+        // ... (Delete Dialog Logic stays the same, it uses transactionToDelete)
+        val t = transactionToDelete!!
         AlertDialog(
             onDismissRequest = { 
                 transactionToDelete = null
@@ -636,8 +1402,7 @@ private fun CashFlowTabContent(
             text = { 
                 Column {
                     Text(
-                        if (isGrouped) "Are you sure you want to delete this specific record from the group? This total will be updated."
-                        else "Are you sure you want to delete this transaction? This action cannot be undone.",
+                        "Are you sure you want to delete this transaction? This action cannot be undone.",
                         fontFamily = ManropeFamily
                     )
                     
@@ -656,7 +1421,7 @@ private fun CashFlowTabContent(
                         Text("Forgiven", fontFamily = ManropeFamily, fontSize = 14.sp)
                     }
                     
-                    if (isLent) {
+                    if (t.transactionType == "lent") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth().clickable { isBlacklisted = !isBlacklisted }
@@ -672,12 +1437,12 @@ private fun CashFlowTabContent(
                 }
             },
             confirmButton = {
-                val isEnabled = if (isLent) isForgiven || isBlacklisted else isForgiven
+                val isEnabled = if (t.transactionType == "lent") isForgiven || isBlacklisted else isForgiven
                 
                 TextButton(
                     enabled = isEnabled,
                     onClick = {
-                        onDeleteTransaction(transactionToDelete!!)
+                        onDeleteTransaction(t)
                         transactionToDelete = null
                         isForgiven = false
                         isBlacklisted = false
@@ -705,120 +1470,196 @@ private fun CashFlowTabContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 24.dp),
+            .padding(
+                horizontal = if (isLandscape) 12.dp else 24.dp,
+                vertical = if (isLandscape) 8.dp else 24.dp
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ── Scrollable Upper Part (Now using LazyColumn for shuffling animations) ──
-        Box(modifier = Modifier.weight(1f)) {
-            if (transactions.isEmpty()) {
-                val infiniteTransition = rememberInfiniteTransition(label = "cashFlowEmpty")
-                val offsetY by infiniteTransition.animateFloat(
-                    initialValue = 0f,
-                    targetValue  = 12f,
-                    animationSpec = infiniteRepeatable(
-                        animation  = tween(2500, easing = LinearOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "y"
-                )
-
-                Column(
-                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally
+        // ── Search & Filter Row ──────────────────────────────────────────────
+        if (hasAnyTransactions) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+                    .animateContentSize()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .padding(top = 60.dp)
-                            .graphicsLayer { translationY = offsetY }
-                            .size(140.dp)
-                            .background(KumbukaColors.SurfaceContainerHigh.copy(alpha = 0.5f), CircleShape)
+                    // Search Bar
+                    AnimatedVisibility(
+                        visible = isFilterExpanded,
+                        enter = scaleIn(
+                            initialScale = 0.7f,
+                            transformOrigin = TransformOrigin(1f, 0.5f),
+                            animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessLow)
+                        ) + fadeIn(),
+                        exit = scaleOut(
+                            targetScale = 0.7f,
+                            transformOrigin = TransformOrigin(1f, 0.5f),
+                            animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)
+                        ) + fadeOut(),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(
-                            imageVector        = Icons.AutoMirrored.Outlined.Notes,
-                            contentDescription = null,
-                            modifier           = Modifier.size(64.dp),
-                            tint               = KumbukaColors.Primary.copy(alpha = 0.3f)
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .padding(end = 8.dp),
+                            placeholder = { 
+                                Text("Search...", fontFamily = ManropeFamily, fontSize = 13.sp) 
+                            },
+                            leadingIcon = { 
+                                Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp)) 
+                            },
+                            trailingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { onSearchQueryChange("") }) {
+                                        Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            } else null,
+                            shape = RoundedCornerShape(24.dp),
+                            singleLine = true
                         )
                     }
 
-                    Spacer(Modifier.height(40.dp))
+                    // Lens Icon
+                    if (!isFilterExpanded) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(KumbukaColors.SurfaceContainerLow, RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { isFilterExpanded = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Search, null, tint = KumbukaColors.Primary, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                    }
 
-                    Text(
-                        text       = "Your cash flow is quiet",
-                        fontFamily = ManropeFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                        color = KumbukaColors.Primary,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(Modifier.height(12.dp))
-
-                    Text(
-                        text = "Record your first transaction to see your lending and borrowing trends here.",
-                        fontFamily = ManropeFamily,
-                        fontSize = 15.sp,
-                        color = KumbukaColors.OnSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 24.dp),
-                        lineHeight = 24.sp
-                    )
-                }
-            } else {
-                // ── Grouping and Sorting Logic ──────────────────────────────
-                // 1. Group by Person first
-                val personGroups = transactions.groupBy { 
-                    val normalizedPhone = it.phoneNumber.filter { char -> char.isDigit() }.takeLast(9)
-                    "${it.name.lowercase()}|$normalizedPhone"
-                }
-                
-                // 2. Sort People by their latest overall transaction date
-                val sortedPeople = personGroups.entries.sortedByDescending { it.value.maxOf { t -> t.dateInMillis } }
-                
-                // 3. Create a flat list of groups (Person-Type combinations)
-                val sortedGroups = mutableListOf<Triple<String, List<TransactionEntity>, String>>()
-                sortedPeople.forEach { entry ->
-                    val personKey = entry.key
-                    val personTransactions = entry.value
-                    val typeGroups = personTransactions.groupBy { it.transactionType }
-                    
-                    // Always show "lent" then "borrowed" for the same person
-                    val typesInOrder = typeGroups.keys.sortedBy { if (it == "lent") 0 else 1 }
-                    
-                    typesInOrder.forEach { type ->
-                        val itemsOfType = typeGroups[type]!!
-                        val groupKey = "$personKey|$type"
-                        sortedGroups.add(Triple(groupKey, itemsOfType, type))
+                    // Filter Icon
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(if (isFilterExpanded) KumbukaColors.Primary else KumbukaColors.SurfaceContainerLow, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { isFilterExpanded = !isFilterExpanded },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Tune, 
+                            null, 
+                            tint = if (isFilterExpanded) Color.White else KumbukaColors.Primary, 
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
+                // Filter Criteria
+                AnimatedVisibility(
+                    visible = isFilterExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("Lent", "Borrowed", "Due", "Overdue").forEach { criteria ->
+                            val isSelected = criteria in selectedFilters
+                            
+                            if (criteria == "Due") {
+                                Box {
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = { onToggleFilter("Due"); if (!isSelected) showDueMenu = true },
+                                        label = {
+                                            Text(if (isSelected && selectedDueOption != null) "Due: $selectedDueOption" else "Due", fontFamily = ManropeFamily, fontSize = 12.sp)
+                                        },
+                                        trailingIcon = { Icon(if (isSelected) Icons.Default.ArrowDropDown else Icons.Default.Add, null, modifier = Modifier.size(14.dp)) },
+                                        shape = RoundedCornerShape(20.dp)
+                                    )
+
+                                    DropdownMenu(
+                                        expanded = showDueMenu,
+                                        onDismissRequest = { showDueMenu = false }
+                                    ) {
+                                        DropdownMenuItem(text = { Text("All Due") }, onClick = { onUpdateDueOption(null); showDueMenu = false })
+                                        dueOptions.forEach { option ->
+                                            DropdownMenuItem(text = { Text(option) }, onClick = { onUpdateDueOption(option); showDueMenu = false })
+                                        }
+                                    }
+                                }
+                            } else {
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onToggleFilter(criteria) },
+                                    label = { Text(criteria, fontFamily = ManropeFamily, fontSize = 12.sp) },
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                            }
+                        }
+
+                        if (selectedFilters.isNotEmpty()) {
+                            Text("Clear", fontWeight = FontWeight.Bold, color = KumbukaColors.Error, modifier = Modifier.padding(start = 4.dp).clickable { onClearFilters() })
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Scrollable Upper Part ──────────────────────────────────────────────
+        Box(modifier = Modifier.weight(1f)) {
+            if (!hasAnyTransactions) {
+                // Empty state handled by Parent logic now (it passes hasAnyTransactions)
+                // but we keep this as fallback if needed
+            } else if (groups.isEmpty()) {
+                // Search result empty
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(Icons.Default.Search, null, modifier = Modifier.size(64.dp), tint = KumbukaColors.Primary.copy(alpha = 0.15f))
+                    Spacer(Modifier.height(16.dp))
+                    Text("No matching records", fontFamily = ManropeFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = KumbukaColors.Primary)
+                }
+            } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 40.dp)
                 ) {
                     items(
-                        items = sortedGroups,
-                        key = { it.first } // Stable key for shuffling animation
-                    ) { triple ->
-                        val key = triple.first
-                        val groupItems = triple.second
-                        
-                        val representative = groupItems.first()
-                        val totalAmount = groupItems.sumOf { it.amount }
-                        val latestDate = groupItems.maxOf { it.dateInMillis }
-                        
+                        items = groups,
+                        key = { it.key }
+                    ) { group ->
                         Box(modifier = Modifier.animateItem()) {
                             TransactionItem(
-                                transaction = representative.copy(amount = totalAmount, dateInMillis = latestDate),
-                                isExpanded = expandedGroupId == key,
+                                transaction = group.representative.copy(
+                                    amount = group.totalAmount, 
+                                    balance = group.totalBalance,
+                                    dateInMillis = group.latestDate
+                                ),
+                                isExpanded = expandedGroupId == group.key,
                                 onExpandClick = {
-                                    expandedGroupId = if (expandedGroupId == key) null else key
+                                    expandedGroupId = if (expandedGroupId == group.key) null else group.key
                                 },
                                 onEditClick = onEditTransaction,
                                 onDeleteClick = { transactionToDelete = it },
-                                subItems = groupItems
+                                onRecordPayment = onRecordPayment,
+                                subItems = group.items
                             )
                         }
                     }
@@ -826,32 +1667,18 @@ private fun CashFlowTabContent(
             }
         }
 
-        // ── FIXED BOUNDARY ────────────────────────────────────────────────────
-        // Creates a clear gap so scrolling records don't touch the buttons
         Spacer(Modifier.height(24.dp))
 
-        // ── Action Buttons (Pinned to bottom) ─────────────────────────────────
+        // ── Action Buttons ─────────────────────────────────────────────────────
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = if (isLandscape) 0.dp else 16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Button(
-                onClick  = onRecordLent,
-                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFF5F0500).copy(alpha = 0.85f)),
-                modifier = Modifier.weight(1f).height(56.dp),
-                shape    = RoundedCornerShape(12.dp)
-            ) {
-                Text("+ Money Lent", fontFamily = ManropeFamily, 
-                    fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            Button(onClick = onRecordLent, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5F0500).copy(alpha = 0.85f)), modifier = Modifier.weight(1f).height(if (isLandscape) 44.dp else 56.dp), shape = RoundedCornerShape(12.dp)) {
+                Text("+ Money Lent", fontFamily = ManropeFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
             }
-            Button(
-                onClick  = onRecordBorrowed,
-                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFFB52614).copy(alpha = 0.85f)),
-                modifier = Modifier.weight(1f).height(56.dp),
-                shape    = RoundedCornerShape(12.dp)
-            ) {
-                Text("+ Money Borrowed", fontFamily = ManropeFamily, 
-                    fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            Button(onClick = onRecordBorrowed, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB52614).copy(alpha = 0.85f)), modifier = Modifier.weight(1f).height(if (isLandscape) 44.dp else 56.dp), shape = RoundedCornerShape(12.dp)) {
+                Text("+ Money Borrowed", fontFamily = ManropeFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
             }
         }
     }
@@ -864,6 +1691,7 @@ private fun TransactionItem(
     onExpandClick: () -> Unit,
     onEditClick: (TransactionEntity) -> Unit,
     onDeleteClick: (TransactionEntity) -> Unit,
+    onRecordPayment: (TransactionEntity, Double, (Result<Unit>) -> Unit) -> Unit,
     subItems: List<TransactionEntity> = emptyList()
 ) {
     var isVisible by remember { mutableStateOf(false) }
@@ -897,8 +1725,8 @@ private fun TransactionItem(
                 val mainBrush = Brush.linearGradient(
                     colors = if (isLent) {
                         listOf(
-                            Color(0xFF3D0300).copy(alpha = 0.7f),
-                            Color(0xFF5F0500).copy(alpha = 0.9f),
+                            Color(0xFF3D0300).copy(alpha = 0.8f),
+                            Color(0xFF5F0500).copy(alpha = 0.95f),
                         )
                     } else {
                         listOf(
@@ -944,12 +1772,12 @@ private fun TransactionItem(
             }
             .clickable { onExpandClick() }
             .animateContentSize()
-            .padding(16.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp)
     ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy((-2).dp)
-    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = transaction.name,
                 style = TextStyle(
@@ -962,62 +1790,49 @@ private fun TransactionItem(
                         offset = Offset(0f, 2f),
                         blurRadius = 3f
                     )
-                )
+                ),
+                modifier = Modifier.weight(1f)
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (subItems.size > 1) "${subItems.size} records" else dateString,
-                    style = TextStyle(
-                        fontFamily = ManropeFamily,
-                        fontSize = 13.sp,
-                        color = Color.Black.copy(alpha = 0.65f),
-                        shadow = Shadow(
-                            color = Color.Black.copy(alpha = 0.1f),
-                            offset = Offset(0f, 1f),
-                            blurRadius = 2f
-                        )
+
+            PrivacyToggle(
+                isVisible = isVisible,
+                onToggle = { isVisible = !isVisible },
+                tint = Color.White.copy(alpha = 0.9f),
+                iconContainerSize = 65.dp
+            )
+        }
+
+        val amountText = if (isVisible) "$prefix KSh ${String.format(locale, "%,.2f", transaction.balance)}" else "••••"
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            // 1. The Outline (Black)
+            Text(
+                text = amountText,
+                style = TextStyle(
+                    fontFamily = ManropeFamily,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp,
+                    color = Color.Black,
+                    drawStyle = Stroke(
+                        width = 5f,
+                        join = StrokeJoin.Round
                     )
                 )
-
-                Spacer(Modifier.weight(1f))
-
-                PrivacyToggle(
-                    isVisible = isVisible,
-                    onToggle = { isVisible = !isVisible },
-                    tint = Color.White.copy(alpha = 0.9f)
-                ) {
-                    val amountText = if (isVisible) "$prefix KSh ${String.format(locale, "%,.2f", transaction.amount)}" else "••••"
-                    Box(contentAlignment = Alignment.CenterEnd) {
-                        // 1. The Outline (Black)
-                        Text(
-                            text = amountText,
-                            style = TextStyle(
-                                fontFamily = ManropeFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = Color.Black,
-                                drawStyle = Stroke(
-                                    width = 5f,
-                                    join = StrokeJoin.Round
-                                )
-                            )
-                        )
-                        // 2. The Fill (White)
-                        Text(
-                            text = amountText,
-                            style = TextStyle(
-                                fontFamily = ManropeFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = Color.White
-                            )
-                        )
-                    }
-                }
-            }
+            )
+            // 2. The Fill (White)
+            Text(
+                text = amountText,
+                style = TextStyle(
+                    fontFamily = ManropeFamily,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp,
+                    color = Color.White
+                )
+            )
         }
 
         if (isExpanded) {
@@ -1061,7 +1876,7 @@ private fun TransactionItem(
                             color = contentColor
                         )
                         Text(
-                            if (isVisible) "KSh ${String.format(locale, "%,.2f", item.amount)}" else "••••",
+                            if (isVisible) "KSh ${String.format(locale, "%,.2f", item.balance)}" else "••••",
                             fontFamily = ManropeFamily,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 13.sp,
@@ -1080,7 +1895,7 @@ private fun TransactionItem(
                         )
                     }
 
-                    // Row 2: Due Date and Actions (Edit/Delete)
+                    // Row for Due Date and Edit/Delete
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1124,42 +1939,99 @@ private fun TransactionItem(
                             }
                         }
                     }
+
+                    // Row for Balance and Record Payment Icon
+                    if (item.remoteId != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                if (isVisible) "Bal: KSh ${String.format(locale, "%,.2f", item.balance)} (${item.status.replace("_", " ")})" else "Bal: ••••",
+                                fontFamily = ManropeFamily,
+                                fontSize = 10.sp,
+                                color = contentColor.copy(alpha = 0.6f)
+                            )
+
+                            if (item.balance > 0) {
+                                var showPaymentDialog by remember { mutableStateOf(false) }
+                                val context = androidx.compose.ui.platform.LocalContext.current
+
+                                Button(
+                                    onClick = { showPaymentDialog = true },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = KumbukaColors.Primary.copy(alpha = 0.1f),
+                                        contentColor = KumbukaColors.Primary
+                                    ),
+                                    elevation = null
+                                ) {
+                                    Text(
+                                        "+ Payment",
+                                        fontFamily = ManropeFamily,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                if (showPaymentDialog) {
+                                    var paymentAmount by remember { mutableStateOf("") }
+                                    var isSubmitting by remember { mutableStateOf(false) }
+
+                                    AlertDialog(
+                                        onDismissRequest = { if (!isSubmitting) showPaymentDialog = false },
+                                        title = { Text("Record Payment", fontFamily = ManropeFamily, fontWeight = FontWeight.Bold) },
+                                        text = {
+                                            Column {
+                                                Text("Enter amount paid for this record:", fontFamily = ManropeFamily)
+                                                Spacer(Modifier.height(8.dp))
+                                                OutlinedTextField(
+                                                    value = paymentAmount,
+                                                    onValueChange = { paymentAmount = it },
+                                                    label = { Text("Amount (KSh)") },
+                                                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    enabled = !isSubmitting
+                                                )
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(
+                                                enabled = !isSubmitting,
+                                                onClick = {
+                                                    val amt = paymentAmount.toDoubleOrNull()
+                                                    if (amt != null && amt > 0) {
+                                                        isSubmitting = true
+                                                        onRecordPayment(item, amt) { result ->
+                                                            isSubmitting = false
+                                                            if (result.isSuccess) {
+                                                                android.widget.Toast.makeText(context, "Payment recorded", android.widget.Toast.LENGTH_SHORT).show()
+                                                                showPaymentDialog = false
+                                                            } else {
+                                                                android.widget.Toast.makeText(context, "Error: ${result.exceptionOrNull()?.message}", android.widget.Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            ) { Text(if (isSubmitting) "Saving..." else "Submit") }
+                                        },
+                                        dismissButton = {
+                                            if (!isSubmitting) {
+                                                TextButton(onClick = { showPaymentDialog = false }) { Text("Cancel") }
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                 }
             }
-            Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = { /* TODO: Open Payment recording */ },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isLent) Color.White.copy(alpha = 0.15f) else KumbukaColors.Primary.copy(alpha = 0.1f),
-                        contentColor = if (isLent) Color.White else KumbukaColors.Primary
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    border = BorderStroke(1.dp, if (isLent) Color.White.copy(alpha = 0.2f) else KumbukaColors.Primary.copy(alpha = 0.2f))
-                ) {
-                    Text(
-                        "Record Payment",
-                        style = TextStyle(
-                            fontFamily = ManropeFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = if (isLent) Color.White else KumbukaColors.Primary,
-                            shadow = if (isLent) Shadow(
-                                color = Color.Black.copy(alpha = 0.3f),
-                                offset = Offset(0f, 2f),
-                                blurRadius = 4f
-                            ) else null
-                        )
-                    )
-                }
-            }
         }
     }
 }
@@ -1279,7 +2151,7 @@ private fun PrivacyToggle(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     tint: Color = KumbukaColors.Primary,
-    iconContainerSize: androidx.compose.ui.unit.Dp = 55.dp, // Adjust this for overall icon touch area
+    iconContainerSize: androidx.compose.ui.unit.Dp = 65.dp,
     content: @Composable (RowScope.() -> Unit)? = null
 ) {
     Row(

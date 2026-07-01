@@ -42,11 +42,26 @@ class TransactionViewModel @Inject constructor(
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
-            val transaction = TransactionEntity(
+            val existing = if (id != 0L) repository.getTransactionById(id) else null
+            
+            // Clean amount string: remove commas, currency symbols, and spaces
+            val cleanAmount = amount.replace(Regex("[^0-9.]"), "")
+            val amountValue = cleanAmount.toDoubleOrNull() ?: 0.0
+
+            val transaction = existing?.copy(
+                name = name,
+                phoneNumber = phoneNumber,
+                amount = amountValue,
+                balance = existing.balance, // Keep existing balance
+                dateInMillis = dateInMillis,
+                dueDateInMillis = dueDateInMillis,
+                notes = notes
+            ) ?: TransactionEntity(
                 id = id,
                 name = name,
                 phoneNumber = phoneNumber,
-                amount = amount.toDoubleOrNull() ?: 0.0,
+                amount = amountValue,
+                balance = amountValue, // Set initial balance for new records
                 dateInMillis = dateInMillis,
                 dueDateInMillis = dueDateInMillis,
                 notes = notes,
@@ -63,6 +78,19 @@ class TransactionViewModel @Inject constructor(
                 // Optional: We could show a "Saved locally (Sync pending)" message here
             }
             onSuccess()
+        }
+    }
+
+    fun recordPayment(transaction: TransactionEntity, amount: Double, onResult: (Result<Unit>) -> Unit) {
+        viewModelScope.launch {
+            val result = repository.recordPayment(transaction, amount)
+            onResult(result)
+        }
+    }
+
+    fun deleteTransaction(transaction: TransactionEntity) {
+        viewModelScope.launch {
+            repository.deleteTransaction(transaction)
         }
     }
 }

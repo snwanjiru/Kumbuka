@@ -3,6 +3,8 @@ package app.kumbuka.repository
 import app.kumbuka.data.local.dao.TransactionDao
 import app.kumbuka.data.local.entity.TransactionEntity
 import app.kumbuka.network.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONObject
 import retrofit2.Response
@@ -29,41 +31,96 @@ class TransactionRepositoryImpl @Inject constructor(
         // 2. Try to save to backend
         return try {
             val response = if (transaction.transactionType == "lent") {
-                api.createLoanLent(
-                    LoanLentRequest(
-                        personName = transaction.name,
-                        phoneNumber = transaction.phoneNumber,
-                        amountLent = transaction.amount,
-                        dateLent = dateFormatter.format(Date(transaction.dateInMillis)),
-                        dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
-                        notes = transaction.notes
+                val remoteId = transaction.remoteId
+                if (remoteId != null) {
+                    api.updateLoanLent(
+                        id = remoteId,
+                        request = LoanLentRequest(
+                            personName = transaction.name,
+                            phoneNumber = transaction.phoneNumber,
+                            amountLent = transaction.amount,
+                            dateLent = dateFormatter.format(Date(transaction.dateInMillis)),
+                            dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
+                            notes = transaction.notes
+                        )
                     )
-                )
+                } else {
+                    api.createLoanLent(
+                        LoanLentRequest(
+                            personName = transaction.name,
+                            phoneNumber = transaction.phoneNumber,
+                            amountLent = transaction.amount,
+                            dateLent = dateFormatter.format(Date(transaction.dateInMillis)),
+                            dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
+                            notes = transaction.notes
+                        )
+                    )
+                }
             } else {
-                api.createLoanBorrowed(
-                    LoanBorrowedRequest(
-                        personName = transaction.name,
-                        phoneNumber = transaction.phoneNumber,
-                        amountBorrowed = transaction.amount,
-                        dateBorrowed = dateFormatter.format(Date(transaction.dateInMillis)),
-                        dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
-                        notes = transaction.notes
+                val remoteId = transaction.remoteId
+                if (remoteId != null) {
+                    api.updateLoanBorrowed(
+                        id = remoteId,
+                        request = LoanBorrowedRequest(
+                            personName = transaction.name,
+                            phoneNumber = transaction.phoneNumber,
+                            amountBorrowed = transaction.amount,
+                            dateBorrowed = dateFormatter.format(Date(transaction.dateInMillis)),
+                            dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
+                            notes = transaction.notes
+                        )
                     )
-                )
+                } else {
+                    api.createLoanBorrowed(
+                        LoanBorrowedRequest(
+                            personName = transaction.name,
+                            phoneNumber = transaction.phoneNumber,
+                            amountBorrowed = transaction.amount,
+                            dateBorrowed = dateFormatter.format(Date(transaction.dateInMillis)),
+                            dueDate = transaction.dueDateInMillis?.let { dateFormatter.format(Date(it)) },
+                            notes = transaction.notes
+                        )
+                    )
+                }
             }
 
             if (response.isSuccessful) {
-                // Update local record with remoteId from backend
-                val remoteId = if (transaction.transactionType == "lent") {
-                    (response.body() as? LoanLentResponse)?.id
+                // Update local record with remote fields from backend
+                val toUpdate = if (transaction.transactionType == "lent") {
+                    val body = response.body() as? LoanLentResponse
+                    body?.let {
+                        val existingByRemoteId = transactionDao.getTransactionByRemoteId(it.id)
+                        if (existingByRemoteId != null && existingByRemoteId.id != localId) {
+                            transactionDao.deleteTransactionById(localId)
+                        }
+                        transaction.copy(
+                            id = existingByRemoteId?.id ?: localId,
+                            remoteId = it.id,
+                            amount = it.amountLent,
+                            amountPaid = it.amountPaid,
+                            balance = it.balance,
+                            status = it.status
+                        )
+                    }
                 } else {
-                    (response.body() as? LoanBorrowedResponse)?.id
+                    val body = response.body() as? LoanBorrowedResponse
+                    body?.let {
+                        val existingByRemoteId = transactionDao.getTransactionByRemoteId(it.id)
+                        if (existingByRemoteId != null && existingByRemoteId.id != localId) {
+                            transactionDao.deleteTransactionById(localId)
+                        }
+                        transaction.copy(
+                            id = existingByRemoteId?.id ?: localId,
+                            remoteId = it.id,
+                            amount = it.amountBorrowed,
+                            amountPaid = it.amountPaid,
+                            balance = it.balance,
+                            status = it.status
+                        )
+                    }
                 }
                 
-                if (remoteId != null) {
-                    // Update the remote record by checking if it already exists in the DAO
-                    val existing = transactionDao.getTransactionByRemoteId(remoteId)
-                    val toUpdate = transaction.copy(id = existing?.id ?: localId, remoteId = remoteId)
+                if (toUpdate != null) {
                     transactionDao.insertTransaction(toUpdate)
                 }
                 Result.success(Unit)
@@ -106,6 +163,49 @@ class TransactionRepositoryImpl @Inject constructor(
         return transactionDao.getTransactionById(id)
     }
 
+    override suspend fun recordPayment(transaction: TransactionEntity, amount: Double): Result<Unit> {
+        val remoteId = transaction.remoteId ?: return Result.failure(Exception("Cannot record payment for unsynced transaction"))
+        
+        return try {
+            val response = if (transaction.transactionType == "lent") {
+                api.recordLentPayment(remoteId, PaymentRequest(amount))
+            } else {
+                api.recordBorrowedPayment(remoteId, PaymentRequest(amount))
+            }
+
+            if (response.isSuccessful) {
+                val toUpdate = if (transaction.transactionType == "lent") {
+                    val body = response.body() as? LoanLentResponse
+                    body?.let {
+                        transaction.copy(
+                            amountPaid = it.amountPaid,
+                            balance = it.balance,
+                            status = it.status
+                        )
+                    }
+                } else {
+                    val body = response.body() as? LoanBorrowedResponse
+                    body?.let {
+                        transaction.copy(
+                            amountPaid = it.amountPaid,
+                            balance = it.balance,
+                            status = it.status
+                        )
+                    }
+                }
+                
+                if (toUpdate != null) {
+                    transactionDao.insertTransaction(toUpdate)
+                }
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(parseError(response)))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     override suspend fun getDashboardSummary(): Result<DashboardSummaryResponse> {
         return try {
             val response = api.getDashboardSummary()
@@ -128,21 +228,85 @@ class TransactionRepositoryImpl @Inject constructor(
         val lent = transactions.filter { it.transactionType == "lent" }
         val borrowed = transactions.filter { it.transactionType == "borrowed" }
 
+        // Calculate Debt Aging for lent transactions
+        val agingBuckets = mutableMapOf(
+            "1-7 Days" to 0.0,
+            "8-30 Days" to 0.0,
+            "30+ Days" to 0.0
+        )
+
+        lent.filter { it.status != "PAID" && it.dueDateInMillis != null && it.dueDateInMillis < now }.forEach { loan ->
+            val diff = now - loan.dueDateInMillis!!
+            val days = diff / (1000 * 60 * 60 * 24)
+            when {
+                days <= 7 -> agingBuckets["1-7 Days"] = agingBuckets["1-7 Days"]!! + loan.balance
+                days <= 30 -> agingBuckets["8-30 Days"] = agingBuckets["8-30 Days"]!! + loan.balance
+                else -> agingBuckets["30+ Days"] = agingBuckets["30+ Days"]!! + loan.balance
+            }
+        }
+
+        // Calculate Monthly Trend (Full History, minimum 6 months)
+        val trendData = mutableListOf<MonthlyTrend>()
+        val monthFormat = SimpleDateFormat("MMM yyyy", Locale.getDefault())
+        
+        // Find the earliest transaction date or default to 5 months ago to ensure a graph exists
+        val fiveMonthsAgo = Calendar.getInstance().apply { add(Calendar.MONTH, -5) }.timeInMillis
+        val earliestDate = transactions.minOfOrNull { it.dateInMillis } ?: now
+        val effectiveStartDate = Math.min(earliestDate, fiveMonthsAgo)
+
+        val startCal = Calendar.getInstance().apply { 
+            timeInMillis = effectiveStartDate 
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        
+        val currentCal = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        
+        val loopCal = startCal.clone() as Calendar
+        while (loopCal.timeInMillis <= currentCal.timeInMillis) {
+            val monthLabel = monthFormat.format(loopCal.time)
+            
+            val monthStart = loopCal.timeInMillis
+            val nextMonthCal = (loopCal.clone() as Calendar).apply { add(Calendar.MONTH, 1) }
+            val monthEnd = nextMonthCal.timeInMillis
+
+            val mLent = lent.filter { it.dateInMillis in monthStart until monthEnd }.sumOf { it.amount }
+            val mBorrowed = borrowed.filter { it.dateInMillis in monthStart until monthEnd }.sumOf { it.amount }
+            
+            trendData.add(MonthlyTrend(monthLabel, mLent, mBorrowed))
+            loopCal.add(Calendar.MONTH, 1)
+        }
+
         return DashboardSummaryResponse(
             totalLent = lent.sumOf { it.amount },
             totalBorrowed = borrowed.sumOf { it.amount },
-            amountOwedToMe = lent.sumOf { it.amount }, // Simplified: assuming full amount is owed if locally stored
-            amountIOwe = borrowed.sumOf { it.amount },
-            activeLoansLent = lent.size,
-            activeLoansBorrowed = borrowed.size,
-            overdueLoans = transactions.count { it.dueDateInMillis != null && it.dueDateInMillis < now }
+            amountOwedToMe = lent.sumOf { it.balance },
+            amountIOwe = borrowed.sumOf { it.balance },
+            activeLoansLent = lent.count { it.status != "PAID" },
+            activeLoansBorrowed = borrowed.count { it.status != "PAID" },
+            overdueLoans = transactions.count { it.status != "PAID" && it.dueDateInMillis != null && it.dueDateInMillis < now },
+            debtAging = agingBuckets,
+            monthlyTrend = trendData
         )
     }
 
-    override suspend fun syncWithBackend(): Result<Unit> {
-        return try {
-            val lentResponse = api.getAllLoansLent()
-            val borrowedResponse = api.getAllLoansBorrowed()
+    override suspend fun syncWithBackend(): Result<Unit> = supervisorScope {
+        try {
+            // Run both API calls in parallel to save time, especially on cold starts
+            val lentDeferred = async { api.getAllLoansLent() }
+            val borrowedDeferred = async { api.getAllLoansBorrowed() }
+
+            val lentResponse = lentDeferred.await()
+            val borrowedResponse = borrowedDeferred.await()
 
             if (lentResponse.isSuccessful && borrowedResponse.isSuccessful) {
                 val lentLoans = lentResponse.body() ?: emptyList()
@@ -160,7 +324,10 @@ class TransactionRepositoryImpl @Inject constructor(
                         dateInMillis = parseDate(loan.dateLent),
                         dueDateInMillis = loan.dueDate?.let { parseDate(it) },
                         notes = loan.notes ?: "",
-                        transactionType = "lent"
+                        transactionType = "lent",
+                        amountPaid = loan.amountPaid,
+                        balance = loan.balance,
+                        status = loan.status
                     ))
                 }
 
@@ -173,22 +340,26 @@ class TransactionRepositoryImpl @Inject constructor(
                         dateInMillis = parseDate(loan.dateBorrowed),
                         dueDateInMillis = loan.dueDate?.let { parseDate(it) },
                         notes = loan.notes ?: "",
-                        transactionType = "borrowed"
+                        transactionType = "borrowed",
+                        amountPaid = loan.amountPaid,
+                        balance = loan.balance,
+                        status = loan.status
                     ))
                 }
 
                 // ── SAFE SYNC ────────────────────────────────────────────────
-                // We check if a record with the same remoteId already exists.
-                // If it does, we update it (preserving the local primary key 'id').
-                // If not, we insert it as a new record.
-                entities.forEach { entity ->
+                // Map the remote records to local entities, preserving local 'id's
+                val toSave = entities.map { entity ->
                     val existing = entity.remoteId?.let { transactionDao.getTransactionByRemoteId(it) }
                     if (existing != null) {
-                        transactionDao.insertTransaction(entity.copy(id = existing.id))
+                        entity.copy(id = existing.id)
                     } else {
-                        transactionDao.insertTransaction(entity)
+                        entity
                     }
                 }
+                
+                // Bulk insert to trigger only one Flow emission
+                transactionDao.insertTransactions(toSave)
 
                 Result.success(Unit)
             } else {
@@ -197,6 +368,10 @@ class TransactionRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    override suspend fun clearLocalData() {
+        transactionDao.clearAll()
     }
 
     private fun parseDate(dateStr: String): Long {

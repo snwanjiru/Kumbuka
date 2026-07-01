@@ -11,9 +11,15 @@ interface TransactionRepository {
     fun getTransactionsByType(type: String): Flow<List<TransactionEntity>>
     suspend fun getTransactionById(id: Long): TransactionEntity?
 
+    // New: Record payment
+    suspend fun recordPayment(transaction: TransactionEntity, amount: Double): Result<Unit>
+
     // New: Fetch summary from backend
     suspend fun getDashboardSummary(): Result<DashboardSummaryResponse>
 
     // New: Sync local data with backend
     suspend fun syncWithBackend(): Result<Unit>
+
+    // New: Clear all local transactions (e.g. on logout)
+    suspend fun clearLocalData()
 }

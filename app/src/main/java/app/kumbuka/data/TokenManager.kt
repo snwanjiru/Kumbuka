@@ -53,18 +53,21 @@ class TokenManager @Inject constructor(
     // WRITE — called by AuthRepositoryImpl after a successful login / sign-up
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Save the access token (and optionally a refresh token + expiry).
-    // All three are written in a single atomic DataStore edit so there is
-    // never a partial state where the token exists but the expiry does not.
+    // Save the access token (and optionally a refresh token + name + expiry).
+    // All values are written in a single atomic DataStore edit.
     suspend fun saveTokens(
         accessToken:  String,
         refreshToken: String? = null,
+        userName:     String? = null,
+        userEmail:    String? = null,
         expiresInMs:  Long    = DEFAULT_EXPIRY_MS
     ) {
         context.authDataStore.edit { prefs ->
             prefs[KEY_ACCESS_TOKEN]  = accessToken
             prefs[KEY_TOKEN_EXPIRY]  = System.currentTimeMillis() + expiresInMs
             refreshToken?.let { prefs[KEY_REFRESH_TOKEN] = it }
+            userName?.let { prefs[KEY_USER_NAME] = it }
+            userEmail?.let { prefs[KEY_USER_EMAIL] = it }
         }
     }
 
@@ -75,8 +78,16 @@ class TokenManager @Inject constructor(
             prefs.remove(KEY_ACCESS_TOKEN)
             prefs.remove(KEY_REFRESH_TOKEN)
             prefs.remove(KEY_TOKEN_EXPIRY)
+            prefs.remove(KEY_USER_NAME)
+            prefs.remove(KEY_USER_EMAIL)
         }
     }
+
+    // Returns the stored user name, or null if not stored.
+    suspend fun getUserName(): String? =
+        context.authDataStore.data
+            .map { prefs -> prefs[KEY_USER_NAME] }
+            .first()
 
     // ─────────────────────────────────────────────────────────────────────────
     // READ — called by AuthRepositoryImpl and the AuthInterceptor
@@ -126,6 +137,14 @@ class TokenManager @Inject constructor(
     val accessTokenFlow: Flow<String?> =
         context.authDataStore.data.map { prefs -> prefs[KEY_ACCESS_TOKEN] }
 
+    // Observable flow of the user name
+    val userNameFlow: Flow<String?> =
+        context.authDataStore.data.map { prefs -> prefs[KEY_USER_NAME] }
+
+    // Observable flow of the user email
+    val userEmailFlow: Flow<String?> =
+        context.authDataStore.data.map { prefs -> prefs[KEY_USER_EMAIL] }
+
     // ─────────────────────────────────────────────────────────────────────────
     // CONSTANTS AND KEYS
     // ─────────────────────────────────────────────────────────────────────────
@@ -136,6 +155,12 @@ class TokenManager @Inject constructor(
 
         // Optional refresh token
         private val KEY_REFRESH_TOKEN = stringPreferencesKey("refresh_token")
+
+        // User's full name from registration
+        private val KEY_USER_NAME     = stringPreferencesKey("user_name")
+
+        // User's email from registration
+        private val KEY_USER_EMAIL    = stringPreferencesKey("user_email")
 
         // Unix timestamp (ms) of when the access token expires.
         private val KEY_TOKEN_EXPIRY  = longPreferencesKey("token_expiry_ms")
